@@ -63,11 +63,18 @@
 html {
   -webkit-text-size-adjust: 100%;
   text-size-adjust: 100%;
+  height: 100%;
 }
 
+/* The app is exactly one viewport tall and never scrolls as a document.
+   Anything that needs to scroll does so inside .screen__scroll, which keeps
+   the title bar and the Start button pinned. This only works because .app
+   below has a real height rather than a min-height — with min-height the
+   flex children just grow to their content and overflow-y never engages. */
 body {
   margin: 0;
-  min-height: 100svh;
+  height: 100%;
+  overflow: hidden;
   background: var(--bg);
   color: var(--ink-2);
   font-family: var(--font);
@@ -79,7 +86,9 @@ body {
 }
 
 .app {
-  min-height: 100svh;
+  /* svh, not dvh: size to the smallest viewport so the layout never reflows
+     as browser toolbars hide. In a standalone PWA the two are identical. */
+  height: 100svh;
   display: flex;
   justify-content: center;
   padding: var(--sat) var(--sar) var(--sab) var(--sal);
@@ -94,8 +103,8 @@ body {
   max-width: var(--col);
   display: flex;
   flex-direction: column;
-  min-height: 100svh;
-  min-height: calc(100svh - var(--sat) - var(--sab));
+  height: 100%;
+  min-height: 0;
   padding: 0 20px;
 }
 
@@ -154,14 +163,14 @@ h1, h2, h3 { margin: 0; font-weight: 500; letter-spacing: -0.01em; }
   align-items: center;
   justify-content: space-between;
   gap: 12px;
-  padding: 18px 0 22px;
+  padding: 14px 0 16px;
   flex: none;
 }
 
 .topbar__actions { display: flex; gap: 6px; }
 
 /* vertical rhythm between blocks on a scrolling screen */
-.block { margin-bottom: 28px; }
+.block { margin-bottom: 20px; }
 .block:last-child { margin-bottom: 8px; }
 
 .hint {
@@ -174,15 +183,15 @@ h1, h2, h3 { margin: 0; font-weight: 500; letter-spacing: -0.01em; }
 
 .home__foot {
   flex: none;
-  padding: 14px 0 22px;
+  padding: 12px 0 16px;
   display: flex;
   flex-direction: column;
 }
 
-.range-block { padding: 14px 0 4px; }
+.range-block { padding: 10px 0 2px; }
 
 .footnote {
-  margin: 34px 0 24px;
+  margin: 20px 0 12px;
   font-size: 0.76rem;
   line-height: 1.7;
   color: var(--ink-3);
@@ -437,7 +446,7 @@ input[type="range"]::-moz-range-thumb {
   display: flex;
   align-items: center;
   gap: 14px;
-  padding: 15px 2px;
+  padding: 12px 2px;
   border-bottom: 1px solid var(--line-soft);
   text-align: left;
   width: 100%;
@@ -704,6 +713,8 @@ input[type="range"]::-moz-range-thumb {
 
 .done {
   flex: 1;
+  min-height: 0;
+  overflow-y: auto;
   display: flex;
   flex-direction: column;
   align-items: center;

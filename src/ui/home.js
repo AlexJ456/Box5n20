@@ -190,13 +190,7 @@ export function home(app) {
     lengthWrap.replaceChildren(
       el('div', { class: 'section-label' }, rounds ? 'Rounds' : 'Session length'),
       el('div', { class: 'pills' }, [openPill, ...presetPills, customPill]),
-      el(
-        'div',
-        { class: 'hint' },
-        rounds
-          ? 'Open runs until you end it. Otherwise it stops after the last exhale.'
-          : 'Open runs until you end it. Otherwise it finishes the breath you are on.'
-      )
+      el('div', { class: 'hint' }, 'Open runs until you end it.')
     );
     markPills();
   }
