@@ -41,6 +41,23 @@ export const EXERCISES = {
     ]
   },
 
+  boxExtreme: {
+    id: 'boxExtreme',
+    name: 'Box Extreme',
+    description: 'Ten-second phases for deep calm',
+    mode: 'time',
+    // Fixed, not a slider. Box and Coherent already share the `phaseTime`
+    // setting; giving this one a slider on that same key would make the two
+    // reset each other every time you switched between them.
+    slider: null,
+    phases: () => [
+      { name: 'Inhale', kind: 'in', duration: 10 },
+      { name: 'Hold', kind: 'hold', duration: 10 },
+      { name: 'Exhale', kind: 'out', duration: 10 },
+      { name: 'Wait', kind: 'wait', duration: 10 }
+    ]
+  },
+
   fourSevenEight: {
     id: 'fourSevenEight',
     name: '4-7-8 Breathing',
@@ -88,7 +105,7 @@ export const EXERCISES = {
 };
 
 /** Display order on the home screen. */
-export const EXERCISE_IDS = ['box', 'fourSevenEight', 'longExhale', 'coherent'];
+export const EXERCISE_IDS = ['box', 'boxExtreme', 'fourSevenEight', 'longExhale', 'coherent'];
 
 /** Minute presets for time-based exercises, round presets for 4-7-8. */
 export const TIME_PRESETS = [2, 5, 10];
