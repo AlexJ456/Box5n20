@@ -64,23 +64,26 @@ html {
   -webkit-text-size-adjust: 100%;
   text-size-adjust: 100%;
   height: 100%;
+  overflow: hidden;
+  overscroll-behavior: none;
 }
 
-/* The app is exactly one viewport tall and never scrolls as a document.
-   Anything that needs to scroll does so inside .screen__scroll, which keeps
-   the title bar and the Start button pinned. This only works because .app
-   below has a real height rather than a min-height — with min-height the
-   flex children just grow to their content and overflow-y never engages. */
+/* Hard scroll lock.
+   `overflow: hidden` alone does NOT stop iOS from rubber-banding the
+   document — only taking the body out of flow with `position: fixed` does.
+   Pinned to all four edges, there is no document scroll box at all, so
+   nothing can drift, bounce, or be dragged out of place. */
 body {
+  position: fixed;
+  inset: 0;
   margin: 0;
-  height: 100%;
   overflow: hidden;
+  overscroll-behavior: none;
   background: var(--bg);
   color: var(--ink-2);
   font-family: var(--font);
   font-size: 16px;
   line-height: 1.45;
-  overscroll-behavior: none;
   -webkit-font-smoothing: antialiased;
   -webkit-tap-highlight-color: transparent;
 }
@@ -149,14 +152,26 @@ h1, h2, h3 { margin: 0; font-weight: 500; letter-spacing: -0.01em; }
   to { opacity: 1; transform: none; }
 }
 
-.screen__scroll {
+/* Locked by default — not `auto`. main.js measures after every render and
+   only adds .is-scrollable when the content genuinely does not fit, so on a
+   screen that fits there is no scroll box at all: nothing to drag, nothing
+   to bounce, not even a sub-pixel of travel.
+   `-webkit-overflow-scrolling: touch` is deliberately absent; it creates a
+   momentum layer that rubber-bands on iOS even with content that fits. */
+.screen__scroll,
+.done {
   flex: 1;
   min-height: 0;
-  overflow-y: auto;
-  -webkit-overflow-scrolling: touch;
+  overflow: hidden;
+  overscroll-behavior: contain;
   scrollbar-width: none;
 }
-.screen__scroll::-webkit-scrollbar { display: none; }
+
+.screen__scroll.is-scrollable,
+.done.is-scrollable { overflow-y: auto; }
+
+.screen__scroll::-webkit-scrollbar,
+.done::-webkit-scrollbar { display: none; }
 
 .topbar {
   display: flex;
@@ -200,10 +215,10 @@ h1, h2, h3 { margin: 0; font-weight: 500; letter-spacing: -0.01em; }
 
 .history__actions {
   display: flex;
-  flex-direction: column;
-  gap: 2px;
-  margin: 30px 0 24px;
+  gap: 8px;
+  margin: 18px 0 12px;
 }
+.history__actions .btn { flex: 1; }
 
 /* ==========================================================================
    Buttons
@@ -712,9 +727,6 @@ input[type="range"]::-moz-range-thumb {
    ========================================================================== */
 
 .done {
-  flex: 1;
-  min-height: 0;
-  overflow-y: auto;
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -794,6 +806,11 @@ input[type="range"]::-moz-range-thumb {
   grid-auto-flow: column;
   grid-template-rows: repeat(7, auto);
   grid-auto-columns: 1fr;
+  /* Cells are square, so full width would make this 7 rows of 27px. Capping
+     the width keeps it compact enough for the screen to fit without a
+     scroll box. */
+  max-width: 300px;
+  margin-right: auto;
   /* Without this the rows stretch and the cells come out rectangular; each
      cell should take its height from its own width. */
   align-items: start;
@@ -881,6 +898,96 @@ input[type="range"]::-moz-range-thumb {
 @media (max-height: 700px) {
   .ring { width: min(58vw, 240px); }
   .dots { gap: 14px; }
+}
+
+/* ==========================================================================
+   Wide screens — a desktop browser, not a phone
+
+   The phone layout is deliberately untouched. The min-height guard keeps
+   this off an iPhone held in landscape, which is wide enough to match the
+   width query but far too short for the roomier spacing.
+   ========================================================================== */
+
+/* Width and type. Safe at any height because nothing here grows the layout
+   much vertically, and the ring is sized from vh so it self-limits. */
+@media (min-width: 760px) and (min-height: 600px) {
+  :root { --col: 600px; }
+
+  .view { padding: 0 28px; }
+  .title { font-size: 1.6rem; }
+  .section-label { font-size: 0.76rem; }
+
+  .ex { gap: 18px; }
+  .ex__name { font-size: 1.06rem; }
+  .ex__desc { font-size: 0.85rem; }
+  .ex__pattern { font-size: 0.84rem; padding: 5px 11px; }
+
+  .pill { font-size: 1rem; }
+  .btn { font-size: 1.08rem; }
+
+  /* The session screen gains the most from a big display. */
+  .ring { width: min(52vh, 440px); }
+  .ring__phase { font-size: 1.5rem; }
+  .ring__count { font-size: 3.6rem; }
+  .dots { gap: 30px; }
+  .dot__label { font-size: 0.7rem; }
+
+  .row__title { font-size: 1.02rem; }
+  .row__note { font-size: 0.82rem; }
+  .stat__value { font-size: 1.7rem; }
+  .heatmap { max-width: 100%; }
+}
+
+/* A real desktop window. A single column just gets stretched — the card's
+   name sits far left and its pattern far right with dead space between — so
+   the list goes two-up at roughly phone-card proportions and the two control
+   blocks sit side by side. That uses the width instead of spreading into it,
+   and it shortens the screen enough to fit a short window too. */
+@media (min-width: 1000px) and (min-height: 600px) {
+  :root { --col: 880px; }
+
+  .ex-list {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 10px;
+  }
+
+  .controls {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+    gap: 30px;
+    align-items: start;
+  }
+  /* the grid gap owns the spacing now */
+  .controls .block,
+  .controls .block:last-child { margin-bottom: 0; }
+
+  .home__foot { align-items: center; }
+  .home__foot .btn { width: min(100%, 420px); }
+
+  /* A desktop window is far taller than the content, which otherwise leaves
+     a dead gap above the Start button. Centring balances it.
+     :not(.is-scrollable) matters — centring a container that does overflow
+     makes its top unreachable. */
+  .screen__scroll:not(.is-scrollable) {
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+  }
+}
+
+/* Vertical breathing room, only where there is height to spend. A 1280x720
+   window is wide but short, and this spacing would push Home past the
+   bottom and re-introduce a scrollbar. */
+@media (min-width: 760px) and (min-height: 820px) {
+  .topbar { padding: 26px 0 22px; }
+  .ex { padding: 17px 20px; }
+  .ex-list { gap: 10px; }
+  .block { margin-bottom: 26px; }
+  .pill { min-height: 52px; }
+  .btn { min-height: 60px; }
+  .home__foot { padding: 18px 0 26px; }
+  .row { padding: 15px 4px; }
 }
 
 /* ==========================================================================

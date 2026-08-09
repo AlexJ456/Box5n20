@@ -2,6 +2,8 @@ import { el, icon, mmss } from '../dom.js';
 import { getExercise } from '../exercises.js';
 import { loadHistory, historyStats, heatmapData, clearHistory, exportHistory } from '../storage.js';
 
+const RECENT_SHOWN = 6;
+
 function intensity(seconds) {
   if (seconds <= 0) return 0.05;
   if (seconds < 120) return 0.22;
@@ -65,8 +67,10 @@ export function history(app) {
       })
     );
 
+    // Kept short so the whole screen fits without a scroll box. Everything
+    // ever recorded is still in storage and comes out via Export.
     const recent = list
-      .slice(-20)
+      .slice(-RECENT_SHOWN)
       .reverse()
       .map((entry) =>
         el('div', { class: 'log__item' }, [
@@ -83,13 +87,14 @@ export function history(app) {
       ]),
       el('div', { class: 'section-label' }, 'Last 12 weeks'),
       el('div', { class: 'heatmap' }, cells),
-      el('div', { class: 'section-label' }, 'Recent'),
+      el('div', { class: 'section-label' },
+        list.length > RECENT_SHOWN ? `Recent · ${RECENT_SHOWN} of ${list.length}` : 'Recent'),
       el('div', { class: 'log' }, recent),
       el('div', { class: 'history__actions' }, [
         el(
           'button',
           { class: 'btn btn--quiet', type: 'button', onclick: () => exportHistory(list) },
-          'Export as JSON'
+          'Export'
         ),
         el(
           'button',
@@ -103,7 +108,7 @@ export function history(app) {
               render();
             }
           },
-          'Clear history'
+          'Clear'
         )
       ])
     );

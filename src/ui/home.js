@@ -53,7 +53,13 @@ export function home(app) {
         )
       ])
     ]),
-    el('div', { class: 'screen__scroll' }, [listWrap, sliderWrap, lengthWrap]),
+    // sliderWrap and lengthWrap are wrapped so a wide screen can sit them
+    // side by side. On a phone .controls is an ordinary block and the two
+    // just stack, exactly as before.
+    el('div', { class: 'screen__scroll' }, [
+      listWrap,
+      el('div', { class: 'controls' }, [sliderWrap, lengthWrap])
+    ]),
     el('div', { class: 'home__foot' }, [startBtn])
   ]);
 
