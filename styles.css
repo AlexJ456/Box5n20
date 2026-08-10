@@ -178,14 +178,14 @@ h1, h2, h3 { margin: 0; font-weight: 500; letter-spacing: -0.01em; }
   align-items: center;
   justify-content: space-between;
   gap: 12px;
-  padding: 14px 0 16px;
+  padding: 12px 0 12px;
   flex: none;
 }
 
 .topbar__actions { display: flex; gap: 6px; }
 
 /* vertical rhythm between blocks on a scrolling screen */
-.block { margin-bottom: 20px; }
+.block { margin-bottom: 14px; }
 .block:last-child { margin-bottom: 8px; }
 
 .hint {
@@ -198,9 +198,48 @@ h1, h2, h3 { margin: 0; font-weight: 500; letter-spacing: -0.01em; }
 
 .home__foot {
   flex: none;
-  padding: 12px 0 16px;
+  padding: 10px 0 14px;
   display: flex;
   flex-direction: column;
+  gap: 10px;
+}
+
+/* Quick toggles — same visual language as .pill, so the row reads as part
+   of the existing system rather than a new idiom. */
+.quick {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 7px;
+}
+
+.chip {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  min-height: 40px;
+  padding: 0 6px;
+  border: 1px solid var(--line-soft);
+  border-radius: var(--r);
+  background: var(--card);
+  color: var(--ink-3);
+  transition: border-color 200ms var(--ease), background 200ms var(--ease),
+    color 200ms var(--ease);
+}
+.chip:hover { border-color: var(--line); }
+
+.chip[aria-pressed="true"] {
+  border-color: var(--accent);
+  background: var(--card-active);
+  color: var(--accent);
+}
+
+.chip .icon { width: 17px; height: 17px; flex: none; }
+
+.chip__label {
+  font-size: 0.78rem;
+  letter-spacing: 0.03em;
+  white-space: nowrap;
 }
 
 .range-block { padding: 10px 0 2px; }
@@ -294,14 +333,14 @@ button:disabled { cursor: default; }
    Exercise list (home)
    ========================================================================== */
 
-.ex-list { display: flex; flex-direction: column; gap: 8px; }
+.ex-list { display: flex; flex-direction: column; gap: 7px; }
 
 .ex {
   display: flex;
   align-items: center;
   gap: 14px;
   width: 100%;
-  padding: 13px 15px;
+  padding: 11px 15px;
   text-align: left;
   border: 1px solid var(--line-soft);
   border-radius: var(--r);
@@ -806,11 +845,6 @@ input[type="range"]::-moz-range-thumb {
   grid-auto-flow: column;
   grid-template-rows: repeat(7, auto);
   grid-auto-columns: 1fr;
-  /* Cells are square, so full width would make this 7 rows of 27px. Capping
-     the width keeps it compact enough for the screen to fit without a
-     scroll box. */
-  max-width: 300px;
-  margin-right: auto;
   /* Without this the rows stretch and the cells come out rectangular; each
      cell should take its height from its own width. */
   align-items: start;
@@ -963,7 +997,8 @@ input[type="range"]::-moz-range-thumb {
   .controls .block:last-child { margin-bottom: 0; }
 
   .home__foot { align-items: center; }
-  .home__foot .btn { width: min(100%, 420px); }
+  .home__foot .btn,
+  .home__foot .quick { width: min(100%, 420px); }
 
   /* A desktop window is far taller than the content, which otherwise leaves
      a dead gap above the Start button. Centring balances it.

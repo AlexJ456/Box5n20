@@ -1,4 +1,5 @@
 import { el, icon } from '../dom.js';
+
 import {
   EXERCISE_IDS,
   getExercise,
@@ -20,6 +21,7 @@ export function home(app) {
   const listWrap = el('div', { class: 'ex-list block' });
   const sliderWrap = el('div', { class: 'block' });
   const lengthWrap = el('div', { class: 'block' });
+  const quickWrap = el('div', { class: 'quick' });
 
   const startBtn = el(
     'button',
@@ -60,7 +62,7 @@ export function home(app) {
       listWrap,
       el('div', { class: 'controls' }, [sliderWrap, lengthWrap])
     ]),
-    el('div', { class: 'home__foot' }, [startBtn])
+    el('div', { class: 'home__foot' }, [quickWrap, startBtn])
   ]);
 
   /* ------------------------------------------------------------- exercises */
@@ -195,16 +197,69 @@ export function home(app) {
 
     lengthWrap.replaceChildren(
       el('div', { class: 'section-label' }, rounds ? 'Rounds' : 'Session length'),
-      el('div', { class: 'pills' }, [openPill, ...presetPills, customPill]),
-      el('div', { class: 'hint' }, 'Open runs until you end it.')
+      el('div', { class: 'pills' }, [openPill, ...presetPills, customPill])
     );
     markPills();
+  }
+
+  /* ----------------------------------------------------------- quick chips */
+
+  /**
+   * Shortcuts for the three things that are a per-session decision rather
+   * than a preference. Settings still owns all of them; this is a shortcut,
+   * not a replacement.
+   */
+  function renderQuick() {
+    const soundOn = settings.sound !== 'off';
+
+    quickWrap.replaceChildren(
+      chip('sound', soundOn ? 'volume' : 'volumeOff', 'Sound', soundOn, () => {
+        if (settings.sound === 'off') {
+          settings.sound = settings.lastSound || 'chime';
+        } else {
+          // Remember chime-vs-ambient so unmuting restores what was chosen.
+          settings.lastSound = settings.sound;
+          settings.sound = 'off';
+        }
+        audio.unlock();
+        audio.setMode(settings.sound);
+        commit();
+      }),
+      chip('countdown', 'clock', 'Countdown', settings.countdown, () => {
+        settings.countdown = !settings.countdown;
+        commit();
+      }),
+      chip('sleep', 'moon', 'Sleep', settings.sleepMode, () => {
+        settings.sleepMode = !settings.sleepMode;
+        commit();
+      })
+    );
+  }
+
+  function chip(key, iconName, label, on, onclick) {
+    return el(
+      'button',
+      {
+        class: 'chip',
+        type: 'button',
+        'aria-pressed': String(Boolean(on)),
+        'data-chip': key,
+        onclick
+      },
+      [icon(iconName), el('span', { class: 'chip__label' }, label)]
+    );
+  }
+
+  function commit() {
+    app.save();
+    renderQuick();
   }
 
   function renderAll() {
     renderList();
     renderSlider();
     renderLength();
+    renderQuick();
   }
 
   function start() {

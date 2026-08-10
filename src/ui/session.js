@@ -138,7 +138,7 @@ export function session(app, props) {
     }
 
     notice.textContent = f.finishing ? 'Finishing current cycle' : '';
-    audio.follow(f.breath);
+    audio.follow(f.breath, f.phase.kind);
   }
 
   function onPhase({ index, phase, isFinal, initial }) {

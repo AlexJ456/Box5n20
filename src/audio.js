@@ -93,27 +93,68 @@ function completionBell() {
    Ambient drone
    ------------------------------------------------------------------------- */
 
+/**
+ * The drone has to be usable with your eyes shut, which means every phase
+ * needs its own audible signature:
+ *
+ *   in    pitch climbs a full octave, gain swells      — rising
+ *   hold  parked at the top with a slow shimmer        — suspended, not still rising
+ *   out   pitch falls back, gain fades                 — falling
+ *   wait  effectively silent                           — unmistakably the bottom
+ *
+ * plus a soft filter swell at every boundary. The earlier version took only
+ * `breath`, which the engine holds at a constant 1 through the whole hold and
+ * 0 through the whole wait — so those phases were frozen and there was no
+ * event at any boundary to locate yourself by.
+ */
+
 const DRONE_LOW = 130.81;   // C3, bottom of the exhale
-const DRONE_SPAN = 0.5;     // a perfect fifth up at the top of the inhale
+const DRONE_TOP = 2;        // a full octave up (C4) at the top of the inhale
+
+const SHIMMER_HZ = 4.5;
+const SHIMMER_DEPTH = 0.02;
+
+const GAIN_FLOOR = 0.0008;  // wait: below the noise floor of any real speaker
+const GAIN_LOW = 0.014;
+const GAIN_HIGH = 0.075;
+
+const FILTER_LOW = 520;
+const FILTER_HIGH = 1120;
+const SWELL_LIFT = 900;
+const SWELL_MS = 450;
+
+let swellUntil = 0;
 
 function startDrone() {
   const c = context();
   if (!c || drone) return;
+  const t = c.currentTime;
 
   const gain = c.createGain();
-  gain.gain.setValueAtTime(0.0001, c.currentTime);
+  gain.gain.setValueAtTime(GAIN_FLOOR, t);
 
   const filter = c.createBiquadFilter();
   filter.type = 'lowpass';
-  filter.frequency.setValueAtTime(760, c.currentTime);
-  filter.Q.setValueAtTime(0.6, c.currentTime);
+  filter.frequency.setValueAtTime(FILTER_LOW, t);
+  filter.Q.setValueAtTime(0.6, t);
 
   const a = c.createOscillator();
   const b = c.createOscillator();
   a.type = 'sine';
   b.type = 'sine';
-  a.frequency.setValueAtTime(DRONE_LOW, c.currentTime);
-  b.frequency.setValueAtTime(DRONE_LOW * 1.004, c.currentTime); // gentle beating
+  a.frequency.setValueAtTime(DRONE_LOW, t);
+  b.frequency.setValueAtTime(DRONE_LOW * 1.004, t); // gentle beating
+
+  // The shimmer rides into the master gain's AudioParam. Web Audio sums a
+  // param's scheduled value with whatever is connected to it, so this layers
+  // on top of the setTargetAtTime writes below instead of fighting them.
+  const lfo = c.createOscillator();
+  lfo.type = 'sine';
+  lfo.frequency.setValueAtTime(SHIMMER_HZ, t);
+  const lfoDepth = c.createGain();
+  lfoDepth.gain.setValueAtTime(0, t);
+  lfo.connect(lfoDepth);
+  lfoDepth.connect(gain.gain);
 
   a.connect(filter);
   b.connect(filter);
@@ -121,30 +162,51 @@ function startDrone() {
   gain.connect(c.destination);
   a.start();
   b.start();
+  lfo.start();
 
-  drone = { gain, filter, a, b };
+  drone = { gain, filter, a, b, lfo, lfoDepth };
 }
 
 function stopDrone() {
   if (!drone || !ctx) return;
-  const { gain, a, b } = drone;
+  const { gain, a, b, lfo, lfoDepth } = drone;
   const t = ctx.currentTime;
   drone = null;
+  swellUntil = 0;
   try {
     gain.gain.cancelScheduledValues(t);
     gain.gain.setTargetAtTime(0.0001, t, 0.25);
+    lfoDepth.gain.setTargetAtTime(0, t, 0.2);
     a.stop(t + 1.2);
     b.stop(t + 1.2);
+    lfo.stop(t + 1.2);
   } catch (e) {
     /* already stopped */
   }
 }
 
+/** Where the drone should sit right now, given the breath and the phase. */
+function targets(breath, kind) {
+  if (kind === 'hold') {
+    return { freq: DRONE_LOW * DRONE_TOP, gain: GAIN_HIGH, filter: FILTER_HIGH, shimmer: SHIMMER_DEPTH };
+  }
+  if (kind === 'wait') {
+    return { freq: DRONE_LOW, gain: GAIN_FLOOR, filter: FILTER_LOW, shimmer: 0 };
+  }
+  // in / out — both read straight off the breath, one rising, one falling.
+  return {
+    freq: DRONE_LOW * (1 + (DRONE_TOP - 1) * breath),
+    gain: GAIN_LOW + (GAIN_HIGH - GAIN_LOW) * breath,
+    filter: FILTER_LOW + (FILTER_HIGH - FILTER_LOW) * breath,
+    shimmer: 0
+  };
+}
+
 /**
- * Follow the breath. Called every frame during a session; parameter writes are
- * throttled to ~25Hz because `setTargetAtTime` smooths between them anyway.
+ * Called every frame during a session. Parameter writes are throttled to
+ * ~25Hz because `setTargetAtTime` smooths between them anyway.
  */
-export function follow(breath) {
+export function follow(breath, kind) {
   if (mode !== 'ambient') return;
   if (!drone) startDrone();
   if (!drone || !ctx) return;
@@ -153,11 +215,30 @@ export function follow(breath) {
   if (now - lastParamUpdate < 0.04) return;
   lastParamUpdate = now;
 
-  const freq = DRONE_LOW * (1 + DRONE_SPAN * breath);
-  drone.a.frequency.setTargetAtTime(freq, now, 0.12);
-  drone.b.frequency.setTargetAtTime(freq * 1.004, now, 0.12);
-  drone.filter.frequency.setTargetAtTime(620 + 420 * breath, now, 0.12);
-  drone.gain.gain.setTargetAtTime(0.022 + 0.05 * breath, now, 0.1);
+  const t = targets(breath, kind);
+  drone.a.frequency.setTargetAtTime(t.freq, now, 0.12);
+  drone.b.frequency.setTargetAtTime(t.freq * 1.004, now, 0.12);
+  drone.gain.gain.setTargetAtTime(t.gain, now, 0.1);
+  drone.lfoDepth.gain.setTargetAtTime(t.shimmer, now, 0.15);
+
+  // Leave the filter alone while a boundary swell is still ringing out,
+  // otherwise these writes cancel it 40ms after it starts.
+  if (now >= swellUntil) {
+    drone.filter.frequency.setTargetAtTime(t.filter, now, 0.12);
+  }
+}
+
+/** A soft "wush" marking a phase boundary — textural, never percussive. */
+function swell() {
+  if (!drone || !ctx) return;
+  const now = ctx.currentTime;
+  const from = drone.filter.frequency.value;
+
+  drone.filter.frequency.cancelScheduledValues(now);
+  drone.filter.frequency.setValueAtTime(from, now);
+  drone.filter.frequency.linearRampToValueAtTime(from + SWELL_LIFT, now + 0.09);
+  drone.filter.frequency.setTargetAtTime(FILTER_LOW, now + 0.09, 0.22);
+  swellUntil = now + SWELL_MS / 1000;
 }
 
 /* -------------------------------------------------------------------------
@@ -166,6 +247,7 @@ export function follow(breath) {
 
 export function phaseCue() {
   if (mode === 'chime') phaseChime();
+  else if (mode === 'ambient') swell();
 }
 
 export function completeCue() {

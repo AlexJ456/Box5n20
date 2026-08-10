@@ -2,7 +2,7 @@ import { el, icon, mmss } from '../dom.js';
 import { getExercise } from '../exercises.js';
 import { loadHistory, historyStats, heatmapData, clearHistory, exportHistory } from '../storage.js';
 
-const RECENT_SHOWN = 6;
+const RECENT_SHOWN = 20;
 
 function intensity(seconds) {
   if (seconds <= 0) return 0.05;
@@ -67,8 +67,6 @@ export function history(app) {
       })
     );
 
-    // Kept short so the whole screen fits without a scroll box. Everything
-    // ever recorded is still in storage and comes out via Export.
     const recent = list
       .slice(-RECENT_SHOWN)
       .reverse()

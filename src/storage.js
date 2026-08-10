@@ -14,6 +14,7 @@ export const DEFAULTS = {
   phaseTime: 4,
   exhaleDuration: 6,
   sound: 'off',        // 'off' | 'chime' | 'ambient'
+  lastSound: 'chime',  // what the Home mute chip restores when switched back on
   countdown: false,
   haptics: false,
   sleepMode: true,
@@ -72,6 +73,7 @@ export function loadSettings() {
   settings.brightness = clamp(settings.brightness, 0.25, 1);
   settings.dimFloor = clamp(settings.dimFloor, 0.15, 1);
   if (!['off', 'chime', 'ambient'].includes(settings.sound)) settings.sound = 'off';
+  if (!['chime', 'ambient'].includes(settings.lastSound)) settings.lastSound = 'chime';
 
   if (!stored) write(SETTINGS_KEY, settings);
   return settings;
