@@ -4,18 +4,98 @@
  *   off      silence
  *   chime    the 528Hz phase tone and the 880 / 1174.66Hz completion bell,
  *            carried over unchanged from the previous build
- *   ambient  a continuous, very quiet two-oscillator drone whose pitch falls
- *            a fifth on the exhale — far less jarring in a dark room
+ *   ambient  a soft pad that rises through the inhale, holds at the top, falls
+ *            back through the exhale and drops away to nothing in the wait
  *
  * The AudioContext is created lazily on the first user gesture. Creating it at
  * load (as the previous build did) means Safari hands back a suspended context
  * that never starts.
+ *
+ * Everything is synthesised — there are no audio files to download, so the app
+ * still works offline from the cached shell alone.
  */
 
 let ctx = null;
+let master = null;
 let mode = 'off';
-let drone = null;
+let pad = null;
+let retiring = [];
+let impulse = null;
 let lastParamUpdate = 0;
+let lastAmount = 0;
+let swellUntil = 0;
+
+/* -------------------------------------------------------------------------
+   Ambient tuning
+
+   Every number that shapes the pad lives here so it can be adjusted by ear
+   without reading the graph code below.
+   ------------------------------------------------------------------------- */
+
+const AMBIENT = {
+  // Fixed pitches — an open stack of octaves and fifths on C. The pad never
+  // glides; the phase envelope moves timbre and level instead. A drone that
+  // slides in pitch reads as a siren.
+  voices: [
+    { hz: 65.41,  type: 'sine',     gain: 0.55, pan: 0.0,   detune: -4 }, // C2, the floor
+    { hz: 130.81, type: 'sine',     gain: 1.0,  pan: -0.25, detune: 3 },  // C3, the body
+    { hz: 196.0,  type: 'triangle', gain: 0.28, pan: 0.3,   detune: -6 }, // G3, a little edge
+    { hz: 261.63, type: 'sine',     gain: 0.3,  pan: -0.15, detune: 5 },  // C4
+    { hz: 392.0,  type: 'sine',     gain: 0.22, pan: 0.35,  detune: -3, bloom: true } // G4
+  ],
+
+  // The bloom voice stays out of the way until the top of the breath, so the
+  // chord opens up rather than simply getting louder.
+  bloomFrom: 0.6,
+
+  // The envelope drives the lowpass. Closed at the bottom, open at the top.
+  cutoffLow: 300,
+  cutoffHigh: 1500,
+  filterQ: 0.5,
+
+  // Pad level. `floor` is the wait — almost nothing, so the bottom of the
+  // cycle is unmistakable.
+  levelFloor: 0.004,
+  levelLow: 0.05,
+  levelHigh: 0.13,
+  curve: 1.6,
+
+  // Smoothing. Slower on the way down so the exhale is a release rather than
+  // a gate closing.
+  glideIn: 0.18,
+  glideOut: 0.42,
+
+  // Filtered noise that swells towards the top of the breath. Reads as air.
+  airLevel: 0.05,
+  airFrom: 0.25,        // silent below this much of the envelope
+  airHz: 620,
+  airQ: 0.7,
+
+  // The hold is parked at full level, which on its own sounds frozen rather
+  // than suspended. A slow shallow tremolo keeps it alive without moving where
+  // the level sits. Set shimmerDepth to 0 for a completely static hold.
+  shimmerHz: 3.5,
+  shimmerDepth: 0.012,
+
+  // A soft "wush" at each phase boundary — textural, never percussive.
+  swellLift: 700,
+  swellMs: 450,
+
+  // Procedural room. Length in seconds, and how much of the pad is sent to it.
+  reverbSeconds: 2.8,
+  reverbDecay: 3.2,
+  reverbSend: 0.42,
+
+  fadeIn: 2.5,
+  fadeOut: 2.0,
+  duckUnderBell: 0.35   // how far the pad drops when the completion bell lands
+};
+
+const MASTER_LEVEL = 1;
+
+/* -------------------------------------------------------------------------
+   Context
+   ------------------------------------------------------------------------- */
 
 function context() {
   if (!ctx) {
@@ -31,6 +111,21 @@ function context() {
   return ctx;
 }
 
+/**
+ * Single output stage. Every voice goes through this, so levels stay balanced
+ * against each other and the pad can be faded as a whole.
+ */
+function output() {
+  const c = context();
+  if (!c) return null;
+  if (!master) {
+    master = c.createGain();
+    master.gain.setValueAtTime(MASTER_LEVEL, c.currentTime);
+    master.connect(c.destination);
+  }
+  return master;
+}
+
 /** Call from a user gesture handler before anything else needs to make noise. */
 export function unlock() {
   const c = context();
@@ -39,7 +134,7 @@ export function unlock() {
 
 export function setMode(next) {
   mode = next;
-  if (mode !== 'ambient') stopDrone();
+  if (mode !== 'ambient') stopPad();
 }
 
 export function getMode() {
@@ -52,10 +147,11 @@ export function getMode() {
 
 function phaseChime() {
   const c = context();
-  if (!c) return;
+  const out = output();
+  if (!c || !out) return;
   const t = c.currentTime;
   const gain = c.createGain();
-  gain.connect(c.destination);
+  gain.connect(out);
 
   const osc = c.createOscillator();
   osc.type = 'triangle';
@@ -70,10 +166,11 @@ function phaseChime() {
 
 function completionBell() {
   const c = context();
-  if (!c) return;
+  const out = output();
+  if (!c || !out) return;
   const t = c.currentTime;
   const gain = c.createGain();
-  gain.connect(c.destination);
+  gain.connect(out);
 
   gain.gain.setValueAtTime(0.0001, t);
   gain.gain.exponentialRampToValueAtTime(0.45, t + 0.02);
@@ -90,163 +187,263 @@ function completionBell() {
 }
 
 /* -------------------------------------------------------------------------
-   Ambient drone
+   Ambient pad
    ------------------------------------------------------------------------- */
 
 /**
- * The drone has to be usable with your eyes shut, which means every phase
- * needs its own audible signature:
- *
- *   in    pitch climbs a full octave, gain swells      — rising
- *   hold  parked at the top with a slow shimmer        — suspended, not still rising
- *   out   pitch falls back, gain fades                 — falling
- *   wait  effectively silent                           — unmistakably the bottom
- *
- * plus a soft filter swell at every boundary. The earlier version took only
- * `breath`, which the engine holds at a constant 1 through the whole hold and
- * 0 through the whole wait — so those phases were frozen and there was no
- * event at any boundary to locate yourself by.
+ * A room, made out of noise. Exponentially decaying white noise convolved with
+ * the pad is what separates "an instrument" from "a signal generator", and it
+ * costs nothing to ship because we generate it here rather than loading a file.
+ * Built once on first use and reused for the life of the page.
  */
+function impulseResponse(c) {
+  if (impulse) return impulse;
+  const length = Math.floor(c.sampleRate * AMBIENT.reverbSeconds);
+  const buffer = c.createBuffer(2, length, c.sampleRate);
+  for (let channel = 0; channel < 2; channel += 1) {
+    const data = buffer.getChannelData(channel);
+    for (let i = 0; i < length; i += 1) {
+      const decay = Math.pow(1 - i / length, AMBIENT.reverbDecay);
+      data[i] = (Math.random() * 2 - 1) * decay;
+    }
+  }
+  impulse = buffer;
+  return impulse;
+}
 
-const DRONE_LOW = 130.81;   // C3, bottom of the exhale
-const DRONE_TOP = 2;        // a full octave up (C4) at the top of the inhale
+/** White noise to loop for the air layer. Two seconds is past hearing the seam. */
+function noiseBuffer(c) {
+  const length = Math.floor(c.sampleRate * 2);
+  const buffer = c.createBuffer(1, length, c.sampleRate);
+  const data = buffer.getChannelData(0);
+  for (let i = 0; i < length; i += 1) data[i] = Math.random() * 2 - 1;
+  return buffer;
+}
 
-const SHIMMER_HZ = 4.5;
-const SHIMMER_DEPTH = 0.02;
+/**
+ * Where the pad should sit right now, as a single 0–1 number.
+ *
+ *   in     climbs to the maximum by the end of the inhale
+ *   hold   parked at that maximum, unchanged
+ *   out    falls back down through the exhale
+ *   wait   the bottom — level drops to `levelFloor`, near silence
+ *
+ * The engine already holds `breath` at a constant 1 through the whole hold and
+ * 0 through the whole wait, so the phase kind is what tells those two apart
+ * from a moving inhale or exhale that happens to be at an extreme.
+ */
+function envelope(breath, kind) {
+  if (kind === 'hold') return 1;
+  if (kind === 'wait') return 0;
+  return Math.pow(Math.max(0, Math.min(1, breath)), AMBIENT.curve);
+}
 
-const GAIN_FLOOR = 0.0008;  // wait: below the noise floor of any real speaker
-const GAIN_LOW = 0.014;
-const GAIN_HIGH = 0.075;
-
-const FILTER_LOW = 520;
-const FILTER_HIGH = 1120;
-const SWELL_LIFT = 900;
-const SWELL_MS = 450;
-
-let swellUntil = 0;
-
-function startDrone() {
+function startPad() {
   const c = context();
-  if (!c || drone) return;
+  const out = output();
+  if (!c || !out || pad) return;
+
+  // Pausing and resuming inside the fade-out window would otherwise build a
+  // second pad on top of the first one and double the volume.
+  clearRetiring();
+  lastAmount = 0;
+  swellUntil = 0;
+
+  const stereo = typeof c.createStereoPanner === 'function';
   const t = c.currentTime;
 
-  const gain = c.createGain();
-  gain.gain.setValueAtTime(GAIN_FLOOR, t);
+  // Pad bus: voices -> filter -> level -> envelope -> (dry + reverb) -> master.
+  const level = c.createGain();
+  level.gain.setValueAtTime(AMBIENT.levelFloor, t);
 
   const filter = c.createBiquadFilter();
   filter.type = 'lowpass';
-  filter.frequency.setValueAtTime(FILTER_LOW, t);
-  filter.Q.setValueAtTime(0.6, t);
+  filter.frequency.setValueAtTime(AMBIENT.cutoffLow, t);
+  filter.Q.setValueAtTime(AMBIENT.filterQ, t);
+  filter.connect(level);
 
-  const a = c.createOscillator();
-  const b = c.createOscillator();
-  a.type = 'sine';
-  b.type = 'sine';
-  a.frequency.setValueAtTime(DRONE_LOW, t);
-  b.frequency.setValueAtTime(DRONE_LOW * 1.004, t); // gentle beating
+  // Fades the whole pad in at the start of a session and out at the end,
+  // separately from the phase-driven level so the two never fight.
+  const env = c.createGain();
+  env.gain.setValueAtTime(0.0001, t);
+  env.gain.setTargetAtTime(1, t, AMBIENT.fadeIn / 3);
+  level.connect(env);
+  env.connect(out);
 
-  // The shimmer rides into the master gain's AudioParam. Web Audio sums a
-  // param's scheduled value with whatever is connected to it, so this layers
-  // on top of the setTargetAtTime writes below instead of fighting them.
+  if (typeof c.createConvolver === 'function') {
+    const send = c.createGain();
+    send.gain.setValueAtTime(AMBIENT.reverbSend, t);
+    const convolver = c.createConvolver();
+    convolver.buffer = impulseResponse(c);
+    env.connect(send);
+    send.connect(convolver);
+    convolver.connect(out);
+  }
+
+  // The shimmer rides into the level AudioParam. Web Audio sums a param's
+  // scheduled value with whatever is connected to it, so this layers on top of
+  // the setTargetAtTime writes in follow() instead of fighting them.
   const lfo = c.createOscillator();
   lfo.type = 'sine';
-  lfo.frequency.setValueAtTime(SHIMMER_HZ, t);
+  lfo.frequency.setValueAtTime(AMBIENT.shimmerHz, t);
   const lfoDepth = c.createGain();
   lfoDepth.gain.setValueAtTime(0, t);
   lfo.connect(lfoDepth);
-  lfoDepth.connect(gain.gain);
-
-  a.connect(filter);
-  b.connect(filter);
-  filter.connect(gain);
-  gain.connect(c.destination);
-  a.start();
-  b.start();
+  lfoDepth.connect(level.gain);
   lfo.start();
 
-  drone = { gain, filter, a, b, lfo, lfoDepth };
+  const voices = AMBIENT.voices.map((spec) => {
+    const osc = c.createOscillator();
+    osc.type = spec.type;
+    osc.frequency.setValueAtTime(spec.hz, t);
+    // A few cents apart so the stack shimmers instead of beating at a fixed rate.
+    if (osc.detune) osc.detune.setValueAtTime(spec.detune, t);
+
+    const gain = c.createGain();
+    gain.gain.setValueAtTime(spec.bloom ? 0.0001 : spec.gain, t);
+    osc.connect(gain);
+
+    if (stereo) {
+      const panner = c.createStereoPanner();
+      panner.pan.setValueAtTime(spec.pan, t);
+      gain.connect(panner);
+      panner.connect(filter);
+    } else {
+      gain.connect(filter);
+    }
+
+    osc.start();
+    return { osc, gain, spec };
+  });
+
+  // Air layer, into the envelope so it gets the same fade and the same room.
+  const air = c.createBufferSource();
+  air.buffer = noiseBuffer(c);
+  air.loop = true;
+  const airFilter = c.createBiquadFilter();
+  airFilter.type = 'bandpass';
+  airFilter.frequency.setValueAtTime(AMBIENT.airHz, t);
+  airFilter.Q.setValueAtTime(AMBIENT.airQ, t);
+  const airGain = c.createGain();
+  airGain.gain.setValueAtTime(0.0001, t);
+  air.connect(airFilter);
+  airFilter.connect(airGain);
+  airGain.connect(env);
+  air.start();
+
+  pad = { level, filter, env, voices, air, airGain, airFilter, lfo, lfoDepth };
 }
 
-function stopDrone() {
-  if (!drone || !ctx) return;
-  const { gain, a, b, lfo, lfoDepth } = drone;
+function stopPad() {
+  if (!pad || !ctx) return;
+  const graph = pad;
   const t = ctx.currentTime;
-  drone = null;
+  const dead = t + AMBIENT.fadeOut + 0.3;
+  pad = null;
   swellUntil = 0;
+
+  // The oscillators keep running while the tail fades, so hold on to the graph
+  // until they are actually gone.
+  retiring.push(graph);
+  setTimeout(() => {
+    retiring = retiring.filter((g) => g !== graph);
+  }, (AMBIENT.fadeOut + 0.4) * 1000);
+
+  silence(graph, t, AMBIENT.fadeOut / 3, dead);
+}
+
+/** Cut short anything still fading out. */
+function clearRetiring() {
+  if (!ctx || retiring.length === 0) return;
+  const t = ctx.currentTime;
+  for (const graph of retiring) silence(graph, t, 0.03, t + 0.2);
+  retiring = [];
+}
+
+function silence(graph, at, timeConstant, dead) {
   try {
-    gain.gain.cancelScheduledValues(t);
-    gain.gain.setTargetAtTime(0.0001, t, 0.25);
-    lfoDepth.gain.setTargetAtTime(0, t, 0.2);
-    a.stop(t + 1.2);
-    b.stop(t + 1.2);
-    lfo.stop(t + 1.2);
+    graph.env.gain.cancelScheduledValues(at);
+    graph.env.gain.setTargetAtTime(0.0001, at, timeConstant);
+    graph.lfoDepth.gain.setTargetAtTime(0, at, 0.2);
+    graph.voices.forEach(({ osc }) => osc.stop(dead));
+    graph.air.stop(dead);
+    graph.lfo.stop(dead);
   } catch (e) {
     /* already stopped */
   }
 }
 
-/** Where the drone should sit right now, given the breath and the phase. */
-function targets(breath, kind) {
-  if (kind === 'hold') {
-    return { freq: DRONE_LOW * DRONE_TOP, gain: GAIN_HIGH, filter: FILTER_HIGH, shimmer: SHIMMER_DEPTH };
-  }
-  if (kind === 'wait') {
-    return { freq: DRONE_LOW, gain: GAIN_FLOOR, filter: FILTER_LOW, shimmer: 0 };
-  }
-  // in / out — both read straight off the breath, one rising, one falling.
-  return {
-    freq: DRONE_LOW * (1 + (DRONE_TOP - 1) * breath),
-    gain: GAIN_LOW + (GAIN_HIGH - GAIN_LOW) * breath,
-    filter: FILTER_LOW + (FILTER_HIGH - FILTER_LOW) * breath,
-    shimmer: 0
-  };
-}
-
 /**
- * Called every frame during a session. Parameter writes are throttled to
- * ~25Hz because `setTargetAtTime` smooths between them anyway.
+ * Follow the breath. Called every frame during a session; parameter writes are
+ * throttled to ~25Hz because `setTargetAtTime` smooths between them anyway.
  */
 export function follow(breath, kind) {
   if (mode !== 'ambient') return;
-  if (!drone) startDrone();
-  if (!drone || !ctx) return;
+  if (!pad) startPad();
+  if (!pad || !ctx) return;
 
   const now = ctx.currentTime;
   if (now - lastParamUpdate < 0.04) return;
   lastParamUpdate = now;
 
-  const t = targets(breath, kind);
-  drone.a.frequency.setTargetAtTime(t.freq, now, 0.12);
-  drone.b.frequency.setTargetAtTime(t.freq * 1.004, now, 0.12);
-  drone.gain.gain.setTargetAtTime(t.gain, now, 0.1);
-  drone.lfoDepth.gain.setTargetAtTime(t.shimmer, now, 0.15);
+  const amount = envelope(breath, kind);
+
+  // Settle more slowly than we open, so the exhale feels like a release.
+  const glide = amount >= lastAmount ? AMBIENT.glideIn : AMBIENT.glideOut;
+  lastAmount = amount;
+
+  const level =
+    kind === 'wait'
+      ? AMBIENT.levelFloor
+      : AMBIENT.levelLow + (AMBIENT.levelHigh - AMBIENT.levelLow) * amount;
+  pad.level.gain.setTargetAtTime(level, now, glide);
 
   // Leave the filter alone while a boundary swell is still ringing out,
   // otherwise these writes cancel it 40ms after it starts.
   if (now >= swellUntil) {
-    drone.filter.frequency.setTargetAtTime(t.filter, now, 0.12);
+    pad.filter.frequency.setTargetAtTime(
+      AMBIENT.cutoffLow + (AMBIENT.cutoffHigh - AMBIENT.cutoffLow) * amount,
+      now,
+      glide
+    );
   }
+
+  // Only the hold shimmers — everywhere else the movement is the envelope.
+  pad.lfoDepth.gain.setTargetAtTime(kind === 'hold' ? AMBIENT.shimmerDepth : 0, now, 0.15);
+
+  // The top voice only arrives near the peak of the breath.
+  const bloom = Math.max(0, amount - AMBIENT.bloomFrom) / (1 - AMBIENT.bloomFrom);
+  for (const voice of pad.voices) {
+    if (!voice.spec.bloom) continue;
+    voice.gain.gain.setTargetAtTime(Math.max(0.0001, voice.spec.gain * bloom), now, glide);
+  }
+
+  const airAmount =
+    kind === 'wait' ? 0 : Math.max(0, amount - AMBIENT.airFrom) / (1 - AMBIENT.airFrom);
+  pad.airGain.gain.setTargetAtTime(Math.max(0.0001, AMBIENT.airLevel * airAmount), now, glide);
+  pad.airFilter.frequency.setTargetAtTime(AMBIENT.airHz * (1 + 0.6 * amount), now, glide);
 }
 
 /**
  * A quiet bell at each phase boundary, pitched by phase.
  *
- * The filter swell alone marked *that* something changed but not *what*, so
- * with your eyes shut you still had to count. These four pitches identify the
- * phase outright: the pair rises into the top of the breath and falls away
- * into the bottom. Roughly a quarter the level of chime mode, sine rather
- * than triangle, so it sits inside the drone instead of on top of it.
+ * The pad tells you where in the breath you are; these tell you which phase
+ * just began without having to open your eyes. The pair rises into the top of
+ * the breath and falls away into the bottom. Roughly a quarter the level of
+ * chime mode, sine rather than triangle, so it sits inside the pad instead of
+ * on top of it.
  */
 const AMBIENT_BELL = {
   in: 523.25,    // C5
   hold: 659.25,  // E5 — highest, lungs full
-  out: 392.00,   // G4
+  out: 392.0,    // G4
   wait: 261.63   // C4 — lowest, lungs empty
 };
 
 function ambientBell(kind) {
   const c = context();
-  if (!c) return;
+  const out = output();
+  if (!c || !out) return;
   const freq = AMBIENT_BELL[kind];
   if (!freq) return;
 
@@ -255,7 +452,7 @@ function ambientBell(kind) {
   gain.gain.setValueAtTime(0.0001, t);
   gain.gain.exponentialRampToValueAtTime(0.12, t + 0.012);
   gain.gain.exponentialRampToValueAtTime(0.0001, t + 0.55);
-  gain.connect(c.destination);
+  gain.connect(out);
 
   const osc = c.createOscillator();
   osc.type = 'sine';
@@ -267,15 +464,15 @@ function ambientBell(kind) {
 
 /** A soft "wush" marking a phase boundary — textural, never percussive. */
 function swell() {
-  if (!drone || !ctx) return;
+  if (!pad || !ctx) return;
   const now = ctx.currentTime;
-  const from = drone.filter.frequency.value;
+  const from = pad.filter.frequency.value;
 
-  drone.filter.frequency.cancelScheduledValues(now);
-  drone.filter.frequency.setValueAtTime(from, now);
-  drone.filter.frequency.linearRampToValueAtTime(from + SWELL_LIFT, now + 0.09);
-  drone.filter.frequency.setTargetAtTime(FILTER_LOW, now + 0.09, 0.22);
-  swellUntil = now + SWELL_MS / 1000;
+  pad.filter.frequency.cancelScheduledValues(now);
+  pad.filter.frequency.setValueAtTime(from, now);
+  pad.filter.frequency.linearRampToValueAtTime(from + AMBIENT.swellLift, now + 0.09);
+  pad.filter.frequency.setTargetAtTime(AMBIENT.cutoffLow, now + 0.09, 0.22);
+  swellUntil = now + AMBIENT.swellMs / 1000;
 }
 
 /* -------------------------------------------------------------------------
@@ -292,12 +489,18 @@ export function phaseCue(kind) {
 
 export function completeCue() {
   if (mode === 'off') return;
-  if (mode === 'ambient') stopDrone();
+  // Duck the pad and let it decay underneath the bell rather than cutting both
+  // off at the same instant.
+  if (mode === 'ambient' && pad && ctx) {
+    pad.env.gain.cancelScheduledValues(ctx.currentTime);
+    pad.env.gain.setTargetAtTime(AMBIENT.duckUnderBell, ctx.currentTime, 0.15);
+    setTimeout(stopPad, 400);
+  }
   completionBell();
 }
 
 export function stop() {
-  stopDrone();
+  stopPad();
 }
 
 /** Free the hardware when the app is backgrounded; resume on return. */

@@ -168,7 +168,8 @@ export function settings(app) {
 
       el('div', { class: 'footnote' }, [
         el('div', {}, 'Everything is stored on this device only.'),
-        el('div', {}, 'Works fully offline once installed.')
+        el('div', {}, 'Works fully offline once installed.'),
+        el('div', {}, 'To move it to another device, use Export backup in history.')
       ])
     ])
   ]);
