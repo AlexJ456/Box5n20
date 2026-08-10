@@ -11,8 +11,11 @@ const HISTORY_LIMIT = 500;
 
 export const DEFAULTS = {
   exercise: 'box',
-  phaseTime: 4,
-  exhaleDuration: 6,
+  // One key per exercise with a slider. They used to share `phaseTime`,
+  // which meant setting one silently moved the other.
+  phaseTime: 4,        // Box Breathing
+  coherentTime: 5,     // Coherent Breathing
+  exhaleDuration: 6,   // Long Exhale
   sound: 'off',        // 'off' | 'chime' | 'ambient'
   lastSound: 'chime',  // what the Home mute chip restores when switched back on
   // Session length, remembered per mode. Minutes and rounds are not
@@ -71,6 +74,17 @@ export function loadSettings() {
     if (value === undefined || value === null) continue;
     if (typeof value !== typeof DEFAULTS[key]) continue;
     settings[key] = value;
+  }
+
+  // One-time migration, safe to delete once installs have turned over.
+  // Coherent used to share Box's `phaseTime`. Carry the value across when it
+  // is valid for Coherent so the card keeps showing what it showed before;
+  // otherwise leave the default. Either way Box is untouched.
+  // Range mirrors EXERCISES.coherent.slider — that is the source of truth.
+  if (base.coherentTime === undefined && typeof base.phaseTime === 'number') {
+    const shared = base.phaseTime;
+    const onGrid = Math.abs(shared * 2 - Math.round(shared * 2)) < 1e-9;
+    if (shared >= 4.5 && shared <= 6 && onGrid) settings.coherentTime = shared;
   }
 
   // Guard the ranged values in case the stored copy was hand-edited.

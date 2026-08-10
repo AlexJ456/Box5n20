@@ -93,16 +93,40 @@ export const EXERCISES = {
     description: 'Equal inhale and exhale for HRV',
     mode: 'time',
     slider: {
-      setting: 'phaseTime',
+      // Its own key, not Box's `phaseTime`. Sharing one meant picking 4.5s
+      // here silently snapped Box onto 5s, and vice versa.
+      setting: 'coherentTime',
       label: 'Breath time',
       min: 4.5, max: 6, step: 0.5, fallback: 5
     },
     phases: (s) => [
-      { name: 'Inhale', kind: 'in', duration: s.phaseTime },
-      { name: 'Exhale', kind: 'out', duration: s.phaseTime }
+      { name: 'Inhale', kind: 'in', duration: s.coherentTime },
+      { name: 'Exhale', kind: 'out', duration: s.coherentTime }
     ]
   }
 };
+
+/**
+ * Two exercises sharing a `slider.setting` means one storage slot for two
+ * values, and each one silently drags the other onto its own step grid. That
+ * shipped once and was invisible until it was hit by hand, so make it
+ * announce itself instead.
+ */
+(function assertDistinctSettings() {
+  const seen = new Map();
+  for (const [id, exercise] of Object.entries(EXERCISES)) {
+    const key = exercise.slider && exercise.slider.setting;
+    if (!key) continue;
+    if (seen.has(key)) {
+      console.error(
+        `[exercises] "${id}" and "${seen.get(key)}" both store their slider in ` +
+        `"${key}". Each exercise needs its own settings key or they will ` +
+        `overwrite each other.`
+      );
+    }
+    seen.set(key, id);
+  }
+})();
 
 /** Display order on the home screen. */
 export const EXERCISE_IDS = ['box', 'boxExtreme', 'fourSevenEight', 'longExhale', 'coherent'];
