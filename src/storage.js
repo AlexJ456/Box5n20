@@ -21,6 +21,7 @@ export const DEFAULTS = {
   // interchangeable, so switching exercise must not clobber the other one.
   lastMinutes: 0,      // 0 = open-ended
   lastRounds: 0,       // 0 = open-ended
+  phaseInput: 'list',  // how the phase-time sheet picks: 'list' | 'slider'
   countdown: false,
   haptics: false,
   sleepMode: true,
@@ -90,6 +91,7 @@ export function loadSettings() {
   settings.brightness = clamp(settings.brightness, 0.25, 1);
   settings.dimFloor = clamp(settings.dimFloor, 0.15, 1);
   if (!['off', 'chime', 'ambient'].includes(settings.sound)) settings.sound = 'off';
+  if (!['list', 'slider'].includes(settings.phaseInput)) settings.phaseInput = 'list';
 
   if (!stored) write(SETTINGS_KEY, settings);
   return settings;

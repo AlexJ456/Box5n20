@@ -11,9 +11,12 @@ import { el, icon } from '../dom.js';
  * @param {Array}    opts.options   [{ value, label }] — value null means "no limit"
  * @param {*}        opts.value     the currently selected value
  * @param {object}   [opts.custom]  { placeholder, label } to show a free-entry row
+ * @param {Node}     [opts.accessory] control shown on the title row, right-aligned
+ * @param {Node}     [opts.body]    replaces the option rows entirely
  * @param {Function} opts.onSelect  called with the chosen value; the sheet then closes
+ * @returns {{ close: Function, setBody: Function }} setBody(null) restores the rows
  */
-export function openSheet({ title, options, value, custom, onSelect }) {
+export function openSheet({ title, options, value, custom, accessory, body, onSelect }) {
   let closing = false;
 
   const rows = options.map((option) => {
@@ -76,10 +79,16 @@ export function openSheet({ title, options, value, custom, onSelect }) {
     choose(Number.isFinite(parsed) && parsed > 0 ? parsed : null);
   }
 
+  const list = el('div', { class: 'sheet__list' }, rows);
+  const bodyWrap = el('div', { class: 'sheet__body' }, [body || list]);
+
   const panel = el('div', { class: 'sheet__panel', role: 'dialog', 'aria-modal': 'true' }, [
     el('div', { class: 'sheet__handle' }),
-    el('div', { class: 'sheet__title' }, title),
-    el('div', { class: 'sheet__list' }, rows)
+    el('div', { class: 'sheet__head' }, [
+      el('div', { class: 'sheet__title' }, title),
+      accessory || null
+    ]),
+    bodyWrap
   ]);
 
   const root = el('div', { class: 'sheet' }, [
@@ -114,5 +123,9 @@ export function openSheet({ title, options, value, custom, onSelect }) {
   // Next frame, so the opening transition has a starting point to animate from.
   requestAnimationFrame(() => root.classList.add('is-open'));
 
-  return { close };
+  return {
+    close,
+    /** Swap the sheet's contents in place; null restores the option rows. */
+    setBody: (node) => bodyWrap.replaceChildren(node || list)
+  };
 }

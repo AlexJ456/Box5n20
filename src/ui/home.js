@@ -115,23 +115,94 @@ export function home(app) {
     return out;
   }
 
+  function applyPhase(spec, value) {
+    settings[spec.setting] = value;
+    app.save();
+    renderList();
+    renderQuick();
+  }
+
+  /**
+   * The slider is indexed over the same steps the list offers rather than
+   * over raw seconds, so it can only ever land on a value the exercise
+   * actually supports — including Coherent's half-seconds.
+   */
+  function phaseSliderBody(spec, steps, sheet) {
+    const current = sliderValue(getExercise(settings.exercise), settings);
+    const readout = el('div', { class: 'sheet__readout' }, `${num(current)}s`);
+
+    const input = el('input', {
+      type: 'range',
+      min: 0,
+      max: steps.length - 1,
+      step: 1,
+      value: Math.max(0, steps.indexOf(current)),
+      'aria-label': spec.label,
+      oninput: (e) => {
+        const value = steps[Number(e.target.value)];
+        readout.textContent = `${num(value)}s`;
+        applyPhase(spec, value);
+      }
+    });
+
+    return el('div', { class: 'sheet__slider' }, [
+      el('div', { class: 'sheet__range' }, [
+        el('div', { class: 'sheet__scale' }, `${num(steps[0])}s`),
+        readout,
+        el('div', { class: 'sheet__scale' }, `${num(steps[steps.length - 1])}s`)
+      ]),
+      input,
+      el(
+        'button',
+        { class: 'btn', type: 'button', onclick: () => sheet.close() },
+        'Done'
+      )
+    ]);
+  }
+
   function openPhaseSheet() {
     const exercise = getExercise(settings.exercise);
     const spec = exercise.slider;
     if (!spec) return;
 
-    openSheet({
+    const steps = sliderSteps(spec);
+    let sheet;
+
+    // Two ways to pick the same value; which one you prefer is remembered.
+    const modes = [['list', 'List'], ['slider', 'Slider']];
+    const buttons = modes.map(([mode, label]) =>
+      el(
+        'button',
+        {
+          type: 'button',
+          'aria-pressed': String(settings.phaseInput === mode),
+          onclick: () => {
+            settings.phaseInput = mode;
+            app.save();
+            buttons.forEach((b, i) =>
+              b.setAttribute('aria-pressed', String(modes[i][0] === mode))
+            );
+            sheet.setBody(mode === 'slider' ? phaseSliderBody(spec, steps, sheet) : null);
+          }
+        },
+        label
+      )
+    );
+
+    sheet = openSheet({
       title: spec.label,
       value: sliderValue(exercise, settings),
-      options: sliderSteps(spec).map((v) => ({ value: v, label: `${num(v)} seconds` })),
+      options: steps.map((v) => ({ value: v, label: `${num(v)} seconds` })),
+      accessory: el('div', { class: 'seg seg--sheet', role: 'group' }, buttons),
       onSelect: (value) => {
         if (value === null) return;
-        settings[spec.setting] = value;
-        app.save();
-        renderList();
-        renderQuick();
+        applyPhase(spec, value);
       }
     });
+
+    if (settings.phaseInput === 'slider') {
+      sheet.setBody(phaseSliderBody(spec, steps, sheet));
+    }
   }
 
   /* --------------------------------------------------------------- length  */

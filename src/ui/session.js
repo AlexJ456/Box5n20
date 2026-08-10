@@ -61,13 +61,12 @@ export function session(app, props) {
 
   const stage = el('div', { class: 'session__stage' }, [ring.el, dotRow]);
 
-  const notice = el('div', { class: 'notice' });
   const primaryBtn = el(
     'button',
     { class: 'btn btn--ghost', type: 'button', onclick: togglePause },
     [icon('pause'), el('span', {}, 'Pause')]
   );
-  const foot = el('div', { class: 'session__foot' }, [notice, primaryBtn]);
+  const foot = el('div', { class: 'session__foot' }, [primaryBtn]);
 
   const root = el('div', { class: 'screen session' }, [hud, stage, foot]);
 
@@ -141,7 +140,6 @@ export function session(app, props) {
       hudTime.textContent = label;
     }
 
-    notice.textContent = f.finishing ? 'Finishing current cycle' : '';
     audio.follow(f.breath, f.phase.kind);
   }
 
