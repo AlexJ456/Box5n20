@@ -17,7 +17,6 @@ export const DEFAULTS = {
   coherentTime: 5,     // Coherent Breathing
   exhaleDuration: 6,   // Long Exhale
   sound: 'off',        // 'off' | 'chime' | 'ambient'
-  lastSound: 'chime',  // what the Home mute chip restores when switched back on
   // Session length, remembered per mode. Minutes and rounds are not
   // interchangeable, so switching exercise must not clobber the other one.
   lastMinutes: 0,      // 0 = open-ended
@@ -91,7 +90,6 @@ export function loadSettings() {
   settings.brightness = clamp(settings.brightness, 0.25, 1);
   settings.dimFloor = clamp(settings.dimFloor, 0.15, 1);
   if (!['off', 'chime', 'ambient'].includes(settings.sound)) settings.sound = 'off';
-  if (!['chime', 'ambient'].includes(settings.lastSound)) settings.lastSound = 'chime';
 
   if (!stored) write(SETTINGS_KEY, settings);
   return settings;

@@ -17,6 +17,32 @@ function ease(p) {
   return 0.5 - Math.cos(Math.PI * p) / 2;
 }
 
+/**
+ * When a time-limited session will actually finish.
+ *
+ * A session never stops mid-breath: the limit only arms the ending, and the
+ * session runs on until the current exhale completes. So the real duration is
+ * the first exhale-completion at or after the limit, which can be most of a
+ * cycle longer than the limit itself — a 5 minute Box session at 5s a phase
+ * really runs 5:15. The HUD shows this rather than the limit, so the countdown
+ * is honest about when it will end.
+ *
+ * Kept next to the rule it mirrors: `isFinal` below ends on the same instant.
+ */
+export function projectedEnd(phases, limitSeconds) {
+  if (!limitSeconds) return 0;
+  const outIndex = phases.findIndex((p) => p.kind === 'out');
+  if (outIndex < 0) return limitSeconds; // nothing to end on; should not happen
+
+  const cycle = phases.reduce((total, p) => total + p.duration, 0);
+  const exhaleEnds = phases
+    .slice(0, outIndex + 1)
+    .reduce((total, p) => total + p.duration, 0);
+
+  const cycles = Math.max(0, Math.ceil((limitSeconds - exhaleEnds) / cycle));
+  return Math.round((cycles * cycle + exhaleEnds) * 1000) / 1000;
+}
+
 export function createEngine() {
   const handlers = new Map();
   let raf = 0;

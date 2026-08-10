@@ -179,8 +179,6 @@ export function home(app) {
    * you just flip — hence wide labelled chips and square icon buttons.
    */
   function renderQuick() {
-    const soundOn = settings.sound !== 'off';
-
     // Filtered, because replaceChildren stringifies null rather than skipping
     // it — phaseChip() returns null for the exercises with no slider.
     const children = [
@@ -196,18 +194,7 @@ export function home(app) {
         [icon('clock'), el('span', { class: 'chip__label' }, lengthLabel())]
       ),
       phaseChip(),
-      chip('sound', soundOn ? 'volume' : 'volumeOff', 'Sound', soundOn, () => {
-        if (settings.sound === 'off') {
-          settings.sound = settings.lastSound || 'chime';
-        } else {
-          // Remember chime-vs-ambient so unmuting restores what was chosen.
-          settings.lastSound = settings.sound;
-          settings.sound = 'off';
-        }
-        audio.unlock();
-        audio.setMode(settings.sound);
-        commit();
-      }),
+      soundChip(),
       chip('countdown', 'hash', 'Countdown', settings.countdown, () => {
         settings.countdown = !settings.countdown;
         commit();
@@ -218,6 +205,50 @@ export function home(app) {
       })
     ];
     quickWrap.replaceChildren(...children.filter(Boolean));
+  }
+
+  /**
+   * Sound is a three-way choice, so the chip opens a sheet like the other
+   * value chips rather than toggling. The icon carries the current mode, so
+   * it still reads at a glance without costing the row any width.
+   */
+  const SOUND_ICON = { ambient: 'volume', chime: 'bell', off: 'volumeOff' };
+
+  function soundChip() {
+    const on = settings.sound !== 'off';
+    return el(
+      'button',
+      {
+        class: 'chip',
+        type: 'button',
+        'data-chip': 'sound',
+        'aria-haspopup': 'dialog',
+        'aria-pressed': String(on),
+        'aria-label': `Sound: ${settings.sound === 'off' ? 'mute' : settings.sound}`,
+        title: 'Sound',
+        onclick: openSoundSheet
+      },
+      [icon(SOUND_ICON[settings.sound] || 'volumeOff')]
+    );
+  }
+
+  function openSoundSheet() {
+    audio.unlock();
+    openSheet({
+      title: 'Sound',
+      value: settings.sound,
+      options: [
+        { value: 'ambient', label: 'Ambient — drone and soft chime' },
+        { value: 'chime', label: 'Chime — a tone at each phase' },
+        { value: 'off', label: 'Mute' }
+      ],
+      onSelect: (value) => {
+        if (!value) return;
+        settings.sound = value;
+        audio.setMode(value);
+        commit();
+      }
+    });
   }
 
   /** Only the three sliderless exercises omit this. */

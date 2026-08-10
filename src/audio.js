@@ -228,6 +228,43 @@ export function follow(breath, kind) {
   }
 }
 
+/**
+ * A quiet bell at each phase boundary, pitched by phase.
+ *
+ * The filter swell alone marked *that* something changed but not *what*, so
+ * with your eyes shut you still had to count. These four pitches identify the
+ * phase outright: the pair rises into the top of the breath and falls away
+ * into the bottom. Roughly a quarter the level of chime mode, sine rather
+ * than triangle, so it sits inside the drone instead of on top of it.
+ */
+const AMBIENT_BELL = {
+  in: 523.25,    // C5
+  hold: 659.25,  // E5 — highest, lungs full
+  out: 392.00,   // G4
+  wait: 261.63   // C4 — lowest, lungs empty
+};
+
+function ambientBell(kind) {
+  const c = context();
+  if (!c) return;
+  const freq = AMBIENT_BELL[kind];
+  if (!freq) return;
+
+  const t = c.currentTime;
+  const gain = c.createGain();
+  gain.gain.setValueAtTime(0.0001, t);
+  gain.gain.exponentialRampToValueAtTime(0.12, t + 0.012);
+  gain.gain.exponentialRampToValueAtTime(0.0001, t + 0.55);
+  gain.connect(c.destination);
+
+  const osc = c.createOscillator();
+  osc.type = 'sine';
+  osc.frequency.setValueAtTime(freq, t);
+  osc.connect(gain);
+  osc.start(t);
+  osc.stop(t + 0.55);
+}
+
 /** A soft "wush" marking a phase boundary — textural, never percussive. */
 function swell() {
   if (!drone || !ctx) return;
@@ -245,9 +282,12 @@ function swell() {
    Public cues
    ------------------------------------------------------------------------- */
 
-export function phaseCue() {
+export function phaseCue(kind) {
   if (mode === 'chime') phaseChime();
-  else if (mode === 'ambient') swell();
+  else if (mode === 'ambient') {
+    swell();
+    ambientBell(kind);
+  }
 }
 
 export function completeCue() {

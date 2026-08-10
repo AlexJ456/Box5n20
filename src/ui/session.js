@@ -5,6 +5,7 @@ import * as audio from '../audio.js';
 import * as haptics from '../haptics.js';
 import * as wakelock from '../wakelock.js';
 import { recordSession } from '../storage.js';
+import { projectedEnd } from '../engine.js';
 
 const SLEEP_DELAY = 20000;
 
@@ -32,6 +33,9 @@ export function session(app, props) {
   const phases = getPhases(props.exerciseId, settings);
 
   const limitSeconds = props.limitMinutes ? props.limitMinutes * 60 : 0;
+  // What the HUD counts towards: the real end, not the limit. The session
+  // always finishes the breath it is on, so these differ by up to a cycle.
+  const endsAt = projectedEnd(phases, limitSeconds);
   const targetRounds = props.targetRounds || 0;
   const isRounds = exercise.mode === 'rounds';
 
@@ -130,7 +134,7 @@ export function session(app, props) {
     const label = isRounds
       ? `Round ${Math.min(f.rounds + 1, targetRounds || f.rounds + 1)}${targetRounds ? ` of ${targetRounds}` : ''}`
       : limitSeconds
-        ? `${mmss(f.seconds)} / ${mmss(limitSeconds)}`
+        ? `${mmss(f.seconds)} / ${mmss(endsAt)}`
         : mmss(f.seconds);
     if (label !== lastHud) {
       lastHud = label;
@@ -150,7 +154,7 @@ export function session(app, props) {
       audio.completeCue();
       haptics.complete();
     } else {
-      audio.phaseCue();
+      audio.phaseCue(phase.kind);
       haptics.phase();
     }
   }
