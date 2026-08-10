@@ -13,7 +13,7 @@
  *   everything else  left alone
  */
 
-const VERSION = 'v1.0.0';
+const VERSION = 'v1.1.0';
 const CACHE = `breathe-${VERSION}`;
 
 const SHELL = [

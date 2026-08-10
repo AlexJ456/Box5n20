@@ -9,6 +9,12 @@ const LEGACY_SETTINGS_KEY = 'breathingExercisesSettings';
 
 const HISTORY_LIMIT = 500;
 
+// Backup files carry their own marker and version so an importer can tell a
+// Breathe backup from any other JSON, and so a future format change can be
+// migrated rather than rejected.
+const BACKUP_FORMAT = 'breathe.backup';
+const BACKUP_VERSION = 1;
+
 export const DEFAULTS = {
   exercise: 'box',
   phaseTime: 4,
@@ -56,23 +62,32 @@ function migrateLegacy() {
   return migrated;
 }
 
-export function loadSettings() {
-  const stored = read(SETTINGS_KEY, null);
-  const base = stored || migrateLegacy() || {};
-
+/**
+ * Fill in from DEFAULTS and drop anything unrecognised or the wrong type. Used
+ * for both the stored copy and an imported one, so a hand-edited file and a
+ * hand-edited localStorage entry are treated with the same suspicion.
+ */
+export function sanitizeSettings(base) {
   const settings = { ...DEFAULTS };
-  for (const key of Object.keys(DEFAULTS)) {
-    const value = base[key];
-    if (value === undefined || value === null) continue;
-    if (typeof value !== typeof DEFAULTS[key]) continue;
-    settings[key] = value;
+  if (base && typeof base === 'object') {
+    for (const key of Object.keys(DEFAULTS)) {
+      const value = base[key];
+      if (value === undefined || value === null) continue;
+      if (typeof value !== typeof DEFAULTS[key]) continue;
+      settings[key] = value;
+    }
   }
 
   // Guard the ranged values in case the stored copy was hand-edited.
   settings.brightness = clamp(settings.brightness, 0.25, 1);
   settings.dimFloor = clamp(settings.dimFloor, 0.15, 1);
   if (!['off', 'chime', 'ambient'].includes(settings.sound)) settings.sound = 'off';
+  return settings;
+}
 
+export function loadSettings() {
+  const stored = read(SETTINGS_KEY, null);
+  const settings = sanitizeSettings(stored || migrateLegacy() || {});
   if (!stored) write(SETTINGS_KEY, settings);
   return settings;
 }
@@ -174,14 +189,116 @@ export function heatmapData(list, weeks = 12) {
   return cells;
 }
 
-export function exportHistory(list) {
-  const blob = new Blob([JSON.stringify(list, null, 2)], { type: 'application/json' });
+/* -------------------------------------------------------------------------
+   Backup
+
+   There is no account and no server, so moving history to another device means
+   moving a file. Export writes one, import merges it in.
+   ------------------------------------------------------------------------- */
+
+export function exportBackup(list, settings) {
+  const backup = {
+    format: BACKUP_FORMAT,
+    version: BACKUP_VERSION,
+    exportedAt: Date.now(),
+    settings: sanitizeSettings(settings),
+    history: list
+  };
+
+  const blob = new Blob([JSON.stringify(backup, null, 2)], { type: 'application/json' });
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url;
-  a.download = `breathe-history-${dayKey(Date.now())}.json`;
+  a.download = `breathe-backup-${dayKey(Date.now())}.json`;
   document.body.appendChild(a);
   a.click();
   a.remove();
   setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+/**
+ * Read a backup file. Returns `{ history, settings }` — settings is null when
+ * the file does not carry any. Throws with a message worth showing the user.
+ *
+ * A bare array is accepted too: that is what the previous "Export as JSON"
+ * button produced, and those files should still be worth something.
+ */
+export function parseBackup(text) {
+  let data;
+  try {
+    data = JSON.parse(text);
+  } catch (e) {
+    throw new Error('That file is not valid JSON.');
+  }
+
+  if (Array.isArray(data)) {
+    return { history: validEntries(data), settings: null };
+  }
+
+  if (!data || typeof data !== 'object' || data.format !== BACKUP_FORMAT) {
+    throw new Error("That file isn't a Breathe backup.");
+  }
+  if (typeof data.version !== 'number' || data.version > BACKUP_VERSION) {
+    throw new Error('That backup was made by a newer version of Breathe.');
+  }
+  if (!Array.isArray(data.history)) {
+    throw new Error('That backup has no session history in it.');
+  }
+
+  return {
+    history: validEntries(data.history),
+    settings: data.settings && typeof data.settings === 'object' ? data.settings : null
+  };
+}
+
+function validEntries(list) {
+  return list.filter(
+    (e) => e && typeof e.ts === 'number' && Number.isFinite(e.ts) && typeof e.seconds === 'number'
+  );
+}
+
+/**
+ * There is no session id, so identity is the timestamp plus what was recorded
+ * against it. `ts` comes from `Date.now()` at millisecond resolution, so two
+ * genuinely different sessions never collide, while the same session imported
+ * twice always does.
+ */
+function entryKey(entry) {
+  return `${entry.ts}|${entry.exercise}|${entry.seconds}`;
+}
+
+/**
+ * Merge imported sessions into the stored history. Returns counts so the caller
+ * can tell the user what actually happened.
+ */
+export function mergeHistory(incoming) {
+  const current = loadHistory();
+  const seen = new Set(current.map(entryKey));
+
+  let added = 0;
+  const combined = current.slice();
+  for (const entry of incoming) {
+    const key = entryKey(entry);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    combined.push({
+      ts: entry.ts,
+      exercise: entry.exercise,
+      seconds: Math.round(entry.seconds),
+      rounds: entry.rounds || 0,
+      completed: Boolean(entry.completed)
+    });
+    added += 1;
+  }
+
+  combined.sort((a, b) => a.ts - b.ts);
+  const list = combined.slice(-HISTORY_LIMIT);
+
+  write(HISTORY_KEY, list);
+  return {
+    list,
+    added,
+    skipped: incoming.length - added,
+    dropped: combined.length - list.length
+  };
 }

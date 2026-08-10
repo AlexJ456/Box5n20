@@ -1,6 +1,17 @@
 import { el, icon, mmss } from '../dom.js';
 import { getExercise } from '../exercises.js';
-import { loadHistory, historyStats, heatmapData, clearHistory, exportHistory } from '../storage.js';
+import {
+  loadHistory,
+  historyStats,
+  heatmapData,
+  clearHistory,
+  exportBackup,
+  parseBackup,
+  mergeHistory,
+  sanitizeSettings
+} from '../storage.js';
+import * as audio from '../audio.js';
+import * as haptics from '../haptics.js';
 
 function intensity(seconds) {
   if (seconds <= 0) return 0.05;
@@ -27,6 +38,60 @@ export function history(app) {
 
   const body = el('div', { class: 'screen__scroll' });
 
+  // There is no account to sync through, so a backup file is how history moves
+  // between devices: export on one, import on the other.
+  const fileInput = el('input', {
+    type: 'file',
+    accept: 'application/json,.json',
+    hidden: true,
+    onchange: (e) => {
+      const file = e.target.files && e.target.files[0];
+      // Reset first, so picking the same file twice still fires a change event.
+      e.target.value = '';
+      if (file) importBackup(file);
+    }
+  });
+
+  async function importBackup(file) {
+    let backup;
+    try {
+      backup = parseBackup(await file.text());
+    } catch (err) {
+      app.toast(err.message);
+      return;
+    }
+
+    if (backup.history.length === 0 && !backup.settings) {
+      app.toast('That backup is empty.');
+      return;
+    }
+
+    const { added, dropped } = mergeHistory(backup.history);
+    list = loadHistory();
+    render();
+
+    if (backup.settings && confirm('Also restore the settings saved in this backup?')) {
+      applySettings(backup.settings);
+    }
+
+    const parts = [
+      added === 0
+        ? 'Already up to date'
+        : `Added ${added} ${added === 1 ? 'session' : 'sessions'}`
+    ];
+    if (dropped > 0) parts.push(`${dropped} oldest trimmed`);
+    app.toast(parts.join(' · '));
+  }
+
+  /** Same wiring the app does at boot, so a restore takes effect immediately. */
+  function applySettings(incoming) {
+    Object.assign(app.settings, sanitizeSettings(incoming));
+    app.save();
+    app.setBrightness(app.settings.brightness);
+    audio.setMode(app.settings.sound);
+    haptics.setEnabled(app.settings.haptics);
+  }
+
   const root = el('div', { class: 'screen' }, [
     el('div', { class: 'topbar' }, [
       el(
@@ -37,7 +102,8 @@ export function history(app) {
       el('h1', { class: 'title' }, 'history'),
       el('div', { style: { width: '44px' } })
     ]),
-    body
+    body,
+    fileInput
   ]);
 
   function stat(value, label) {
@@ -47,10 +113,19 @@ export function history(app) {
     ]);
   }
 
+  function action(label, onclick) {
+    return el('button', { class: 'btn btn--quiet', type: 'button', onclick }, label);
+  }
+
   function render() {
+    // A device you have just installed on is exactly where importing matters
+    // most, so the empty state keeps that button.
     if (list.length === 0) {
       body.replaceChildren(
-        el('div', { class: 'empty' }, 'No sessions yet. Your first one will show up here.')
+        el('div', { class: 'empty' }, 'No sessions yet. Your first one will show up here.'),
+        el('div', { class: 'history__actions' }, [
+          action('Import backup', () => fileInput.click())
+        ])
       );
       return;
     }
@@ -86,26 +161,16 @@ export function history(app) {
       el('div', { class: 'section-label' }, 'Recent'),
       el('div', { class: 'log' }, recent),
       el('div', { class: 'history__actions' }, [
-        el(
-          'button',
-          { class: 'btn btn--quiet', type: 'button', onclick: () => exportHistory(list) },
-          'Export as JSON'
-        ),
-        el(
-          'button',
-          {
-            class: 'btn btn--quiet',
-            type: 'button',
-            onclick: () => {
-              if (!confirm('Delete all session history? This cannot be undone.')) return;
-              clearHistory();
-              list = [];
-              render();
-            }
-          },
-          'Clear history'
-        )
-      ])
+        action('Export backup', () => exportBackup(list, app.settings)),
+        action('Import backup', () => fileInput.click()),
+        action('Clear history', () => {
+          if (!confirm('Delete all session history? This cannot be undone.')) return;
+          clearHistory();
+          list = [];
+          render();
+        })
+      ]),
+      el('div', { class: 'footnote' }, 'Export on one device, import on another to move your history across.')
     );
   }
 
