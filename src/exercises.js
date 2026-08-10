@@ -108,7 +108,7 @@ export const EXERCISES = {
 export const EXERCISE_IDS = ['box', 'boxExtreme', 'fourSevenEight', 'longExhale', 'coherent'];
 
 /** Minute presets for time-based exercises, round presets for 4-7-8. */
-export const TIME_PRESETS = [2, 5, 10];
+export const TIME_PRESETS = [2, 3, 5, 10, 15, 20];
 export const ROUND_PRESETS = [4, 6, 8];
 
 export function getExercise(id) {

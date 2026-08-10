@@ -28,7 +28,6 @@ export function home(app) {
   }
 
   const listWrap = el('div', { class: 'ex-list block' });
-  const sliderWrap = el('div', { class: 'block' });
   const quickWrap = el('div', { class: 'quick' });
 
   const startBtn = el(
@@ -63,10 +62,7 @@ export function home(app) {
         )
       ])
     ]),
-    el('div', { class: 'screen__scroll' }, [
-      listWrap,
-      el('div', { class: 'controls' }, [sliderWrap])
-    ]),
+    el('div', { class: 'screen__scroll' }, [listWrap]),
     el('div', { class: 'home__foot' }, [quickWrap, startBtn])
   ]);
 
@@ -104,42 +100,38 @@ export function home(app) {
     renderAll();
   }
 
-  /* ---------------------------------------------------------------- slider */
+  /* ------------------------------------------------------------ phase time */
 
-  function renderSlider() {
-    const exercise = getExercise(settings.exercise);
-    if (!exercise.slider) {
-      sliderWrap.replaceChildren();
-      return;
+  /**
+   * Every slider range is only three or four steps wide (Box 3–6, Coherent
+   * 4.5–6 by halves, Long Exhale 6–8), so the sheet lists them rather than
+   * offering a slider — easier to hit and consistent with session length.
+   */
+  function sliderSteps(spec) {
+    const out = [];
+    for (let v = spec.min; v <= spec.max + 1e-9; v += spec.step) {
+      out.push(Math.round(v * 100) / 100);
     }
+    return out;
+  }
 
+  function openPhaseSheet() {
+    const exercise = getExercise(settings.exercise);
     const spec = exercise.slider;
-    const value = sliderValue(exercise, settings);
-    const readout = el('div', { class: 'slider-row__value' }, `${num(value)}s`);
+    if (!spec) return;
 
-    const input = el('input', {
-      type: 'range',
-      min: spec.min,
-      max: spec.max,
-      step: spec.step,
-      value,
-      'aria-label': spec.label,
-      oninput: (e) => {
-        const next = Number(e.target.value);
-        settings[spec.setting] = next;
-        readout.textContent = `${num(next)}s`;
+    openSheet({
+      title: spec.label,
+      value: sliderValue(exercise, settings),
+      options: sliderSteps(spec).map((v) => ({ value: v, label: `${num(v)} seconds` })),
+      onSelect: (value) => {
+        if (value === null) return;
+        settings[spec.setting] = value;
         app.save();
         renderList();
+        renderQuick();
       }
     });
-
-    sliderWrap.replaceChildren(
-      el('div', { class: 'slider-row' }, [
-        el('div', { class: 'section-label', style: { margin: '0 0 0 2px' } }, spec.label),
-        readout
-      ]),
-      input
-    );
   }
 
   /* --------------------------------------------------------------- length  */
@@ -182,14 +174,16 @@ export function home(app) {
   /* ----------------------------------------------------------- quick chips */
 
   /**
-   * One row: the session length, then the three per-session toggles. The
-   * length carries a value you read, the rest you just flip — hence one wide
-   * labelled chip and three square icon buttons.
+   * One row: session length, phase time (when the exercise has one), then the
+   * three per-session toggles. The first two carry values you read, the rest
+   * you just flip — hence wide labelled chips and square icon buttons.
    */
   function renderQuick() {
     const soundOn = settings.sound !== 'off';
 
-    quickWrap.replaceChildren(
+    // Filtered, because replaceChildren stringifies null rather than skipping
+    // it — phaseChip() returns null for the exercises with no slider.
+    const children = [
       el(
         'button',
         {
@@ -201,6 +195,7 @@ export function home(app) {
         },
         [icon('clock'), el('span', { class: 'chip__label' }, lengthLabel())]
       ),
+      phaseChip(),
       chip('sound', soundOn ? 'volume' : 'volumeOff', 'Sound', soundOn, () => {
         if (settings.sound === 'off') {
           settings.sound = settings.lastSound || 'chime';
@@ -221,6 +216,26 @@ export function home(app) {
         settings.sleepMode = !settings.sleepMode;
         commit();
       })
+    ];
+    quickWrap.replaceChildren(...children.filter(Boolean));
+  }
+
+  /** Only the three sliderless exercises omit this. */
+  function phaseChip() {
+    const exercise = getExercise(settings.exercise);
+    if (!exercise.slider) return null;
+    return el(
+      'button',
+      {
+        class: 'chip chip--value',
+        type: 'button',
+        'data-chip': 'phase',
+        'aria-haspopup': 'dialog',
+        'aria-label': exercise.slider.label,
+        title: exercise.slider.label,
+        onclick: openPhaseSheet
+      },
+      [el('span', { class: 'chip__label' }, `${num(sliderValue(exercise, settings))}s`)]
     );
   }
 
@@ -247,7 +262,6 @@ export function home(app) {
 
   function renderAll() {
     renderList();
-    renderSlider();
     renderQuick();
   }
 

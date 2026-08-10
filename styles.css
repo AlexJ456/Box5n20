@@ -170,6 +170,16 @@ h1, h2, h3 { margin: 0; font-weight: 500; letter-spacing: -0.01em; }
 .screen__scroll.is-scrollable,
 .done.is-scrollable { overflow-y: auto; }
 
+/* Content is usually far shorter than the pane, which otherwise leaves a dead
+   gap above the Start button. Centring balances it. :not(.is-scrollable)
+   matters — centring a container that does overflow makes its top
+   unreachable. */
+.screen__scroll:not(.is-scrollable) {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+}
+
 .screen__scroll::-webkit-scrollbar,
 .done::-webkit-scrollbar { display: none; }
 
@@ -188,14 +198,6 @@ h1, h2, h3 { margin: 0; font-weight: 500; letter-spacing: -0.01em; }
 .block { margin-bottom: 22px; }
 .block:last-child { margin-bottom: 8px; }
 
-.hint {
-  font-size: 0.76rem;
-  line-height: 1.5;
-  color: var(--ink-3);
-  margin-top: 10px;
-  padding: 0 2px;
-}
-
 .home__foot {
   flex: none;
   padding: 14px 0 18px;
@@ -208,9 +210,8 @@ h1, h2, h3 { margin: 0; font-weight: 500; letter-spacing: -0.01em; }
    flip). The asymmetry is the point — it reads as hierarchy rather than as
    four equal buttons, and it leaves only one control row on the screen. */
 .quick {
-  display: grid;
-  grid-template-columns: 1fr 52px 52px 52px;
-  gap: 7px;
+  display: flex;
+  gap: 6px;
 }
 
 .chip {
@@ -218,6 +219,8 @@ h1, h2, h3 { margin: 0; font-weight: 500; letter-spacing: -0.01em; }
   align-items: center;
   justify-content: center;
   gap: 8px;
+  /* icon toggles are fixed squares; the value chips flex around them */
+  flex: 0 0 48px;
   min-height: 48px;
   padding: 0 6px;
   border: 1px solid var(--line-soft);
@@ -236,7 +239,16 @@ h1, h2, h3 { margin: 0; font-weight: 500; letter-spacing: -0.01em; }
 }
 
 .chip--wide {
+  flex: 1 1 auto;
+  min-width: 0;
   justify-content: flex-start;
+  padding: 0 13px;
+  color: var(--ink-2);
+}
+
+/* phase time — sized to its own value, e.g. "4.5s" */
+.chip--value {
+  flex: 0 0 auto;
   padding: 0 14px;
   color: var(--ink-2);
 }
@@ -307,7 +319,15 @@ h1, h2, h3 { margin: 0; font-weight: 500; letter-spacing: -0.01em; }
   margin: 0 0 6px 2px;
 }
 
-.sheet__list { display: flex; flex-direction: column; }
+.sheet__list {
+  display: flex;
+  flex-direction: column;
+  max-height: 62vh;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: none;
+}
+.sheet__list::-webkit-scrollbar { display: none; }
 
 .sheet__row {
   display: flex;
@@ -503,52 +523,6 @@ button:disabled { cursor: default; }
 /* ==========================================================================
    Pills (duration / rounds presets)
    ========================================================================== */
-
-.pills {
-  display: grid;
-  grid-template-columns: repeat(5, 1fr);
-  gap: 7px;
-}
-
-.pill {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  min-width: 0;
-  min-height: 46px;
-  padding: 0 12px;
-  border: 1px solid var(--line-soft);
-  border-radius: var(--r);
-  background: var(--card);
-  color: var(--ink-2);
-  font-size: 0.92rem;
-  font-variant-numeric: tabular-nums;
-  transition: border-color 200ms var(--ease), background 200ms var(--ease),
-    color 200ms var(--ease);
-}
-.pill:hover { border-color: var(--line); }
-.pill[aria-pressed="true"] {
-  border-color: var(--accent);
-  background: var(--card-active);
-  color: var(--ink);
-}
-
-.pill__custom {
-  width: 100%;
-  min-width: 0;
-  background: none;
-  border: none;
-  color: inherit;
-  font: inherit;
-  font-variant-numeric: tabular-nums;
-  text-align: center;
-  padding: 0;
-  /* 16px keeps iOS from zooming the viewport on focus */
-  font-size: 16px;
-}
-.pill__custom::placeholder { color: var(--ink-3); opacity: 1; }
-.pill__custom:focus { outline: none; }
-.pill:focus-within { border-color: var(--accent); }
 
 /* ==========================================================================
    Slider
@@ -1099,29 +1073,10 @@ input[type="range"]::-moz-range-thumb {
     gap: 10px;
   }
 
-  .controls {
-    display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
-    gap: 30px;
-    align-items: start;
-  }
-  /* the grid gap owns the spacing now */
-  .controls .block,
-  .controls .block:last-child { margin-bottom: 0; }
-
   .home__foot { align-items: center; }
   .home__foot .btn,
   .home__foot .quick { width: min(100%, 420px); }
 
-  /* A desktop window is far taller than the content, which otherwise leaves
-     a dead gap above the Start button. Centring balances it.
-     :not(.is-scrollable) matters — centring a container that does overflow
-     makes its top unreachable. */
-  .screen__scroll:not(.is-scrollable) {
-    display: flex;
-    flex-direction: column;
-    justify-content: center;
-  }
 }
 
 /* Vertical breathing room, only where there is height to spend. A 1280x720
