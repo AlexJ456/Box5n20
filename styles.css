@@ -178,14 +178,14 @@ h1, h2, h3 { margin: 0; font-weight: 500; letter-spacing: -0.01em; }
   align-items: center;
   justify-content: space-between;
   gap: 12px;
-  padding: 12px 0 12px;
+  padding: 16px 0 18px;
   flex: none;
 }
 
 .topbar__actions { display: flex; gap: 6px; }
 
 /* vertical rhythm between blocks on a scrolling screen */
-.block { margin-bottom: 14px; }
+.block { margin-bottom: 22px; }
 .block:last-child { margin-bottom: 8px; }
 
 .hint {
@@ -198,17 +198,18 @@ h1, h2, h3 { margin: 0; font-weight: 500; letter-spacing: -0.01em; }
 
 .home__foot {
   flex: none;
-  padding: 10px 0 14px;
+  padding: 14px 0 18px;
   display: flex;
   flex-direction: column;
   gap: 10px;
 }
 
-/* Quick toggles — same visual language as .pill, so the row reads as part
-   of the existing system rather than a new idiom. */
+/* One row: session length (a value you read) then three toggles (things you
+   flip). The asymmetry is the point — it reads as hierarchy rather than as
+   four equal buttons, and it leaves only one control row on the screen. */
 .quick {
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
+  grid-template-columns: 1fr 52px 52px 52px;
   gap: 7px;
 }
 
@@ -216,8 +217,8 @@ h1, h2, h3 { margin: 0; font-weight: 500; letter-spacing: -0.01em; }
   display: flex;
   align-items: center;
   justify-content: center;
-  gap: 7px;
-  min-height: 40px;
+  gap: 8px;
+  min-height: 48px;
   padding: 0 6px;
   border: 1px solid var(--line-soft);
   border-radius: var(--r);
@@ -234,12 +235,124 @@ h1, h2, h3 { margin: 0; font-weight: 500; letter-spacing: -0.01em; }
   color: var(--accent);
 }
 
-.chip .icon { width: 17px; height: 17px; flex: none; }
+.chip--wide {
+  justify-content: flex-start;
+  padding: 0 14px;
+  color: var(--ink-2);
+}
+.chip--wide .icon { color: var(--ink-3); }
+
+.chip .icon { width: 18px; height: 18px; flex: none; }
 
 .chip__label {
-  font-size: 0.78rem;
-  letter-spacing: 0.03em;
+  font-size: 0.92rem;
+  letter-spacing: 0.02em;
   white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* ==========================================================================
+   Bottom sheet
+   ========================================================================== */
+
+.sheet {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+}
+
+.sheet__backdrop {
+  position: absolute;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.6);
+  opacity: 0;
+  transition: opacity 320ms var(--ease);
+}
+.sheet.is-open .sheet__backdrop { opacity: 1; }
+
+.sheet__panel {
+  position: relative;
+  width: 100%;
+  /* On the phone this is the full column; on a wide screen it stays a
+     dialog-sized panel rather than stretching into a bar. */
+  max-width: min(var(--col), 480px);
+  margin: 0 auto;
+  padding: 8px 20px calc(var(--sab) + 18px);
+  background: #0d0703;
+  border: 1px solid var(--line);
+  border-bottom: none;
+  border-radius: 22px 22px 0 0;
+  transform: translateY(100%);
+  transition: transform 320ms var(--ease);
+}
+.sheet.is-open .sheet__panel { transform: translateY(0); }
+
+.sheet__handle {
+  width: 38px;
+  height: 4px;
+  border-radius: 2px;
+  background: var(--line);
+  margin: 0 auto 14px;
+}
+
+.sheet__title {
+  font-size: 0.72rem;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+  margin: 0 0 6px 2px;
+}
+
+.sheet__list { display: flex; flex-direction: column; }
+
+.sheet__row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  min-height: 52px;
+  padding: 0 2px;
+  text-align: left;
+  color: var(--ink-2);
+  font-size: 1rem;
+  border-bottom: 1px solid var(--line-soft);
+}
+.sheet__row:last-child { border-bottom: none; }
+.sheet__row[aria-pressed="true"] { color: var(--accent); }
+.sheet__row .icon { width: 19px; height: 19px; color: var(--accent); }
+
+.sheet__label { flex: 1; }
+
+.sheet__row--custom { gap: 10px; }
+
+.sheet__input {
+  width: 84px;
+  min-width: 0;
+  text-align: center;
+  /* 16px keeps iOS from zooming the viewport on focus */
+  font-size: 16px;
+  font-variant-numeric: tabular-nums;
+  color: var(--ink);
+  background: var(--card);
+  border: 1px solid var(--line-soft);
+  border-radius: 10px;
+  padding: 9px 8px;
+}
+.sheet__input::placeholder { color: var(--ink-3); opacity: 1; }
+.sheet__input:focus { outline: none; border-color: var(--accent); }
+
+.sheet__set {
+  min-height: 38px;
+  padding: 0 14px;
+  border-radius: 10px;
+  background: linear-gradient(to bottom, var(--ctl-a), var(--ctl-b));
+  color: #1a0e03;
+  font-size: 0.9rem;
+  font-weight: 600;
 }
 
 .range-block { padding: 10px 0 2px; }
@@ -333,14 +446,14 @@ button:disabled { cursor: default; }
    Exercise list (home)
    ========================================================================== */
 
-.ex-list { display: flex; flex-direction: column; gap: 7px; }
+.ex-list { display: flex; flex-direction: column; gap: 8px; }
 
 .ex {
   display: flex;
   align-items: center;
   gap: 14px;
   width: 100%;
-  padding: 11px 15px;
+  padding: 13px 15px;
   text-align: left;
   border: 1px solid var(--line-soft);
   border-radius: var(--r);

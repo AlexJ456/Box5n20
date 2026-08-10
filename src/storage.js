@@ -15,6 +15,10 @@ export const DEFAULTS = {
   exhaleDuration: 6,
   sound: 'off',        // 'off' | 'chime' | 'ambient'
   lastSound: 'chime',  // what the Home mute chip restores when switched back on
+  // Session length, remembered per mode. Minutes and rounds are not
+  // interchangeable, so switching exercise must not clobber the other one.
+  lastMinutes: 0,      // 0 = open-ended
+  lastRounds: 0,       // 0 = open-ended
   countdown: false,
   haptics: false,
   sleepMode: true,

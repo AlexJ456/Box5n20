@@ -1,4 +1,5 @@
 import { el, icon } from '../dom.js';
+import { openSheet } from './sheet.js';
 
 import {
   EXERCISE_IDS,
@@ -14,13 +15,20 @@ import * as audio from '../audio.js';
 export function home(app) {
   const { settings } = app;
 
-  /** Chosen length: a number of minutes/rounds, or null for open-ended. */
-  let chosen = null;
-  let custom = '';
+  /**
+   * Chosen length: a number of minutes/rounds, or null for open-ended.
+   * Minutes and rounds are remembered separately — they are not
+   * interchangeable, so switching exercise must not clobber the other.
+   */
+  const lengthKey = () => (getExercise(settings.exercise).mode === 'rounds' ? 'lastRounds' : 'lastMinutes');
+  const readLength = () => settings[lengthKey()] || null;
+  function writeLength(value) {
+    settings[lengthKey()] = value || 0;
+    app.save();
+  }
 
   const listWrap = el('div', { class: 'ex-list block' });
   const sliderWrap = el('div', { class: 'block' });
-  const lengthWrap = el('div', { class: 'block' });
   const quickWrap = el('div', { class: 'quick' });
 
   const startBtn = el(
@@ -55,12 +63,9 @@ export function home(app) {
         )
       ])
     ]),
-    // sliderWrap and lengthWrap are wrapped so a wide screen can sit them
-    // side by side. On a phone .controls is an ordinary block and the two
-    // just stack, exactly as before.
     el('div', { class: 'screen__scroll' }, [
       listWrap,
-      el('div', { class: 'controls' }, [sliderWrap, lengthWrap])
+      el('div', { class: 'controls' }, [sliderWrap])
     ]),
     el('div', { class: 'home__foot' }, [quickWrap, startBtn])
   ]);
@@ -95,9 +100,7 @@ export function home(app) {
     if (settings.exercise === id) return;
     settings.exercise = id;
     app.save();
-    // Minutes and rounds are not interchangeable, so a mode switch resets it.
-    chosen = null;
-    custom = '';
+    // No reset needed — each mode keeps its own remembered length.
     renderAll();
   }
 
@@ -141,78 +144,63 @@ export function home(app) {
 
   /* --------------------------------------------------------------- length  */
 
-  function renderLength() {
-    const exercise = getExercise(settings.exercise);
-    const rounds = exercise.mode === 'rounds';
+  /** "Open", "5 min", "6 rounds" — what the length chip reads. */
+  function lengthLabel() {
+    const value = readLength();
+    if (!value) return 'Open';
+    if (getExercise(settings.exercise).mode === 'rounds') {
+      return `${value} ${value === 1 ? 'round' : 'rounds'}`;
+    }
+    return `${value} min`;
+  }
+
+  function openLengthSheet() {
+    const rounds = getExercise(settings.exercise).mode === 'rounds';
     const presets = rounds ? ROUND_PRESETS : TIME_PRESETS;
 
-    const customInput = el('input', {
-      class: 'pill__custom',
-      type: 'text',
-      inputmode: 'numeric',
-      pattern: '[0-9]*',
-      maxlength: '3',
-      value: custom,
-      placeholder: rounds ? 'rds' : 'min',
-      'aria-label': rounds ? 'Custom number of rounds' : 'Custom length in minutes',
-      oninput: (e) => {
-        const digits = e.target.value.replace(/[^0-9]/g, '').slice(0, 3);
-        e.target.value = digits;
-        custom = digits;
-        const parsed = Number.parseInt(digits, 10);
-        chosen = Number.isFinite(parsed) && parsed > 0 ? parsed : null;
-        markPills();
+    openSheet({
+      title: rounds ? 'Rounds' : 'Session length',
+      value: readLength(),
+      options: [
+        { value: null, label: 'Open — until I end it' },
+        ...presets.map((value) => ({
+          value,
+          label: rounds ? `${value} rounds` : `${value} minutes`
+        }))
+      ],
+      custom: {
+        label: 'Custom',
+        placeholder: rounds ? 'rounds' : 'minutes'
+      },
+      onSelect: (value) => {
+        writeLength(value);
+        renderQuick();
       }
     });
-
-    const openPill = pill('Open', () => {
-      chosen = null;
-      custom = '';
-      customInput.value = '';
-      markPills();
-    });
-
-    const presetPills = presets.map((value) =>
-      pill(String(value), () => {
-        chosen = value;
-        custom = '';
-        customInput.value = '';
-        markPills();
-      })
-    );
-
-    const customPill = el('div', { class: 'pill' }, [customInput]);
-
-    function pill(label, onclick) {
-      return el('button', { class: 'pill', type: 'button', onclick }, label);
-    }
-
-    function markPills() {
-      openPill.setAttribute('aria-pressed', String(chosen === null));
-      presetPills.forEach((node, i) => {
-        node.setAttribute('aria-pressed', String(chosen === presets[i] && custom === ''));
-      });
-      customPill.setAttribute('aria-pressed', String(custom !== '' && chosen !== null));
-    }
-
-    lengthWrap.replaceChildren(
-      el('div', { class: 'section-label' }, rounds ? 'Rounds' : 'Session length'),
-      el('div', { class: 'pills' }, [openPill, ...presetPills, customPill])
-    );
-    markPills();
   }
 
   /* ----------------------------------------------------------- quick chips */
 
   /**
-   * Shortcuts for the three things that are a per-session decision rather
-   * than a preference. Settings still owns all of them; this is a shortcut,
-   * not a replacement.
+   * One row: the session length, then the three per-session toggles. The
+   * length carries a value you read, the rest you just flip — hence one wide
+   * labelled chip and three square icon buttons.
    */
   function renderQuick() {
     const soundOn = settings.sound !== 'off';
 
     quickWrap.replaceChildren(
+      el(
+        'button',
+        {
+          class: 'chip chip--wide',
+          type: 'button',
+          'data-chip': 'length',
+          'aria-haspopup': 'dialog',
+          onclick: openLengthSheet
+        },
+        [icon('clock'), el('span', { class: 'chip__label' }, lengthLabel())]
+      ),
       chip('sound', soundOn ? 'volume' : 'volumeOff', 'Sound', soundOn, () => {
         if (settings.sound === 'off') {
           settings.sound = settings.lastSound || 'chime';
@@ -225,7 +213,7 @@ export function home(app) {
         audio.setMode(settings.sound);
         commit();
       }),
-      chip('countdown', 'clock', 'Countdown', settings.countdown, () => {
+      chip('countdown', 'hash', 'Countdown', settings.countdown, () => {
         settings.countdown = !settings.countdown;
         commit();
       }),
@@ -243,10 +231,12 @@ export function home(app) {
         class: 'chip',
         type: 'button',
         'aria-pressed': String(Boolean(on)),
+        'aria-label': label,
+        title: label,
         'data-chip': key,
         onclick
       },
-      [icon(iconName), el('span', { class: 'chip__label' }, label)]
+      [icon(iconName)]
     );
   }
 
@@ -258,7 +248,6 @@ export function home(app) {
   function renderAll() {
     renderList();
     renderSlider();
-    renderLength();
     renderQuick();
   }
 
@@ -268,8 +257,8 @@ export function home(app) {
     const exercise = getExercise(settings.exercise);
     app.go('session', {
       exerciseId: settings.exercise,
-      limitMinutes: exercise.mode === 'time' ? chosen : 0,
-      targetRounds: exercise.mode === 'rounds' ? chosen : 0
+      limitMinutes: exercise.mode === 'time' ? readLength() : 0,
+      targetRounds: exercise.mode === 'rounds' ? readLength() : 0
     });
   }
 
