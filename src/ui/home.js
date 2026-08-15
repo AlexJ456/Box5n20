@@ -17,12 +17,25 @@ export function home(app) {
 
   /**
    * Chosen length: a number of minutes/rounds, or null for open-ended.
-   * Minutes and rounds are remembered separately — they are not
-   * interchangeable, so switching exercise must not clobber the other.
+   *
+   * Remembered per exercise. Box and Box Extreme are both time-based, so a
+   * single shared value meant setting Box Extreme to 10 minutes silently moved
+   * Box to 10 minutes as well. An exercise you have never given a length falls
+   * back to the last one picked in its mode, which is still kept separately for
+   * minutes and rounds — those two are not interchangeable.
    */
   const lengthKey = () => (getExercise(settings.exercise).mode === 'rounds' ? 'lastRounds' : 'lastMinutes');
-  const readLength = () => settings[lengthKey()] || null;
+
+  function readLength() {
+    const stored = settings.lengths[settings.exercise];
+    if (typeof stored === 'number') return stored || null;
+    return settings[lengthKey()] || null;
+  }
+
   function writeLength(value) {
+    settings.lengths[settings.exercise] = value || 0;
+    // Keeps the fallback on the most recent choice, so an exercise opened for
+    // the first time starts somewhere sensible rather than wide open.
     settings[lengthKey()] = value || 0;
     app.save();
   }
@@ -96,7 +109,8 @@ export function home(app) {
     if (settings.exercise === id) return;
     settings.exercise = id;
     app.save();
-    // No reset needed — each mode keeps its own remembered length.
+    // No reset needed — each exercise keeps its own remembered length, and
+    // renderAll re-reads it for the one now selected.
     renderAll();
   }
 

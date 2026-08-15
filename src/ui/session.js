@@ -1,11 +1,11 @@
 import { el, icon, mmss } from '../dom.js';
-import { getExercise, getPhases, PHASE_COLORS, PHASE_RGB, num } from '../exercises.js';
+import { getExercise, getPhases, endKind, PHASE_COLORS, PHASE_RGB, num } from '../exercises.js';
 import { createRing } from './ring.js';
 import * as audio from '../audio.js';
 import * as haptics from '../haptics.js';
 import * as wakelock from '../wakelock.js';
 import { recordSession } from '../storage.js';
-import { projectedEnd } from '../engine.js';
+import { endTimeFor } from '../engine.js';
 
 const SLEEP_DELAY = 20000;
 
@@ -32,11 +32,21 @@ export function session(app, props) {
   const exercise = getExercise(props.exerciseId);
   const phases = getPhases(props.exerciseId, settings);
 
-  const limitSeconds = props.limitMinutes ? props.limitMinutes * 60 : 0;
+  // One config, handed to both the HUD and the engine, so what the countdown
+  // promises and what the session actually does cannot drift apart.
+  const config = {
+    phases,
+    mode: exercise.mode,
+    limitSeconds: props.limitMinutes ? props.limitMinutes * 60 : 0,
+    targetRounds: props.targetRounds || 0,
+    endKind: endKind(props.exerciseId)
+  };
+
   // What the HUD counts towards: the real end, not the limit. The session
   // always finishes the breath it is on, so these differ by up to a cycle.
-  const endsAt = projectedEnd(phases, limitSeconds);
-  const targetRounds = props.targetRounds || 0;
+  // Infinity for an open-ended session.
+  const endsAt = endTimeFor(phases, config);
+  const targetRounds = config.targetRounds;
   const isRounds = exercise.mode === 'rounds';
 
   /* ---------------------------------------------------------------- chrome */
@@ -117,9 +127,10 @@ export function session(app, props) {
   let lastRgb = '';
   let lastHud = '';
 
+  // The breath itself is not here: it is one compositor animation per phase,
+  // handed to the ring at the boundary. This runs on the engine's coarse tick
+  // and only touches things that change at human speed.
   function onFrame(f) {
-    ring.setBreath(f.breath);
-    ring.setProgress(f.progress);
     if (settings.countdown) ring.setCountdown(num(f.countdown));
 
     const next = phases[(f.index + 1) % phases.length];
@@ -132,7 +143,7 @@ export function session(app, props) {
 
     const label = isRounds
       ? `Round ${Math.min(f.rounds + 1, targetRounds || f.rounds + 1)}${targetRounds ? ` of ${targetRounds}` : ''}`
-      : limitSeconds
+      : Number.isFinite(endsAt)
         ? `${mmss(f.seconds)} / ${mmss(endsAt)}`
         : mmss(f.seconds);
     if (label !== lastHud) {
@@ -143,18 +154,30 @@ export function session(app, props) {
     audio.follow(f.breath, f.phase.kind);
   }
 
-  function onPhase({ index, phase, isFinal, initial }) {
-    ring.setPhaseName(phase.name);
-    dots.forEach((dot, i) => dot.classList.toggle('is-active', i === index));
-
-    if (initial) return;
+  function onPhase({ index, phase, phaseElapsed, isFinal, initial, skipped, resynced }) {
     if (isFinal) {
+      // The session is over on this instant. `phase` is the one that just
+      // completed; leaving the ring showing it is more honest than flashing up
+      // the phase the session never breathes.
       audio.completeCue();
       haptics.complete();
-    } else {
-      audio.phaseCue(phase.kind);
-      haptics.phase();
+      return;
     }
+
+    ring.setPhaseName(phase.name);
+    // Seeked, not restarted — this is equally a phase starting, a resumed
+    // session picking back up, and a backgrounded one snapping to where the
+    // clock says it should be.
+    ring.setPhase(phase.kind, phase.duration * 1000, phaseElapsed * 1000, engine.paused);
+    dots.forEach((dot, i) => dot.classList.toggle('is-active', i === index));
+
+    // `initial` opens the session, `resynced` is it coming back from a pause or
+    // the background, and `skipped` counts boundaries that went by unseen while
+    // it was away. None has earned a cue — otherwise a couple of minutes in
+    // another app come back as a burst of chimes.
+    if (initial || resynced || skipped > 0) return;
+    audio.phaseCue(phase.kind);
+    haptics.phase();
   }
 
   function onEnd(summary) {
@@ -176,11 +199,12 @@ export function session(app, props) {
     wake();
     if (engine.paused) {
       audio.unlock();
-      engine.resume();
+      engine.resume(); // re-seeks the ring itself, via a resynced phase event
       primaryBtn.replaceChildren(icon('pause'), el('span', {}, 'Pause'));
-      wakelock.request();
+      wakelock.request(onWakeLockDenied);
     } else {
       engine.pause();
+      ring.setPaused(true);
       audio.stop();
       primaryBtn.replaceChildren(icon('play'), el('span', {}, 'Resume'));
       wakelock.release();
@@ -194,13 +218,25 @@ export function session(app, props) {
 
   /* ----------------------------------------------------------------- start */
 
+  /**
+   * iOS refuses the wake lock in Low Power Mode, which used to fail silently —
+   * the screen would go dark mid-session with no explanation. Said once, not on
+   * every re-request.
+   */
+  let warnedNoWakeLock = false;
+  function onWakeLockDenied() {
+    if (warnedNoWakeLock) return;
+    warnedNoWakeLock = true;
+    app.toast('Low Power Mode — your screen may sleep');
+  }
+
   audio.setMode(settings.sound);
   audio.unlock();
   haptics.setEnabled(settings.haptics);
-  wakelock.request();
+  wakelock.request(onWakeLockDenied);
   wake();
 
-  engine.start({ phases, mode: exercise.mode, limitSeconds, targetRounds });
+  engine.start(config);
 
   return {
     el: root,

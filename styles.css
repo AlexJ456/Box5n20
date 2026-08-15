@@ -36,7 +36,6 @@
   /* live, written from JS during a session */
   --phase-color: #f97316;
   --phase-rgb: 249, 115, 22;
-  --breath: 0;
 
   /* global brightness, 0.25 – 1 */
   --lum: 1;
@@ -95,10 +94,26 @@ body {
   display: flex;
   justify-content: center;
   padding: var(--sat) var(--sar) var(--sab) var(--sal);
-  /* Global bedtime dimming. #000 stays #000 at every level, so the OLED
-     background remains fully off. */
-  filter: brightness(var(--lum));
-  transition: filter 900ms var(--ease);
+  position: relative;
+}
+
+/* Global bedtime dimming. #000 stays #000 at every level, so the OLED
+   background remains fully off.
+
+   A black veil rather than `filter: brightness(var(--lum))` on .app. The two
+   are arithmetically the same thing — compositing black at alpha `1 - lum` and
+   multiplying each channel by `lum` both land on `channel * lum` in sRGB — but
+   a filter on the root makes the entire app a render surface that has to be
+   reprocessed every time the breathing orb repaints. This is one flat layer the
+   compositor can hold on its own, which is most of why the session no longer
+   stutters in Low Power Mode. */
+.app__dim {
+  position: absolute;
+  inset: 0;
+  background: #000;
+  opacity: calc(1 - var(--lum));
+  pointer-events: none;
+  transition: opacity 900ms var(--ease);
 }
 
 .view {
@@ -777,7 +792,10 @@ input[type="range"]::-moz-range-thumb {
   opacity: 0.9;
 }
 
-/* the part that actually breathes */
+/* The part that actually breathes. The scale and fade below are only the
+   at-rest state: during a session ui/ring.js drives transform and opacity with
+   one Web Animations API animation per phase, so the movement runs on the
+   compositor instead of being recomputed here on every frame. */
 .ring__orb {
   position: absolute;
   width: 78%;
@@ -790,7 +808,7 @@ input[type="range"]::-moz-range-thumb {
     rgba(var(--phase-rgb), 0.05) 55%,
     rgba(var(--phase-rgb), 0) 72%
   );
-  transform: scale(calc(0.46 + 0.54 * var(--breath)));
+  transform: scale(0.46);
   will-change: transform;
 }
 
@@ -804,8 +822,8 @@ input[type="range"]::-moz-range-thumb {
     rgba(var(--phase-rgb), 0.13) 0%,
     rgba(var(--phase-rgb), 0) 62%
   );
-  opacity: calc(0.35 + 0.65 * var(--breath));
-  transform: scale(calc(0.7 + 0.3 * var(--breath)));
+  opacity: 0.35;
+  transform: scale(0.7);
   will-change: transform, opacity;
   pointer-events: none;
 }
@@ -1132,11 +1150,16 @@ input[type="range"]::-moz-range-thumb {
     animation-iteration-count: 1 !important;
     transition-duration: 0.01ms !important;
   }
-  .app { transition: none; }
+  .app__dim { transition: none; }
 }
 
+/* The rules above cannot reach the breath: a Web Animations API animation
+   outranks any author rule without `!important`, and the blanket
+   `animation-duration` override only applies to CSS animations. ui/ring.js
+   checks for this class itself and animates opacity at a fixed scale — these
+   two rules are its at-rest state. */
 .reduce-motion .ring__orb {
   transform: scale(0.86);
-  opacity: calc(0.35 + 0.65 * var(--breath));
+  opacity: 0.35;
 }
 .reduce-motion .ring__glow { transform: scale(0.9); }

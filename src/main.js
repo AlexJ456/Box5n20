@@ -35,6 +35,7 @@ function go(name, props = {}) {
   clear(viewEl);
   current = VIEWS[name](app, props);
   viewEl.append(current.el);
+  watchView(name);
   syncScrollLocks();
 }
 
@@ -67,7 +68,18 @@ function scheduleSync() {
 // dim slider) and viewport changes (rotation, a resized desktop window) both
 // need a re-measure. Watching the view covers every case without each screen
 // having to remember to ask.
-new MutationObserver(scheduleSync).observe(viewEl, { childList: true, subtree: true });
+//
+// Except during a session: that screen has no scroll container to unlock, but
+// its ring rewrites the countdown text every second — which fired this observer,
+// scheduled a frame, and re-walked the DOM for nothing, once a second,
+// underneath the breathing animation.
+const viewObserver = new MutationObserver(scheduleSync);
+
+function watchView(name) {
+  viewObserver.disconnect();
+  if (name !== 'session') viewObserver.observe(viewEl, { childList: true, subtree: true });
+}
+
 new ResizeObserver(scheduleSync).observe(viewEl);
 window.addEventListener('orientationchange', scheduleSync);
 

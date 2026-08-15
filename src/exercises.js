@@ -1,11 +1,16 @@
 /**
- * The four breathing protocols.
+ * The five breathing protocols.
  *
  * Timings are carried over verbatim from the previous build — do not change
  * them without deciding to change the exercise itself.
  *
  * `kind` drives everything behavioural (which way the ring moves, which phase
  * a session is allowed to end on). `name` is only ever shown to the user.
+ *
+ * `endOn` names the phase kind a session finishes at the completion of, and
+ * defaults to `out` — a breath is a poor thing to be cut off mid-exhale. Only
+ * set it where the exercise genuinely wants a different landing (see
+ * `boxExtreme`), and read it through `endKind()` rather than off the object.
  */
 
 export const PHASE_COLORS = {
@@ -46,10 +51,15 @@ export const EXERCISES = {
     name: 'Box Extreme',
     description: 'Ten-second phases for deep calm',
     mode: 'time',
-    // Fixed, not a slider. Box and Coherent already share the `phaseTime`
-    // setting; giving this one a slider on that same key would make the two
-    // reset each other every time you switched between them.
+    // Fixed, not a slider. Box already uses the `phaseTime` setting; giving
+    // this one a slider on that same key would make the two reset each other
+    // every time you switched between them.
     slider: null,
+    // The one exercise that finishes on the empty hold rather than the exhale.
+    // Ten seconds of stillness after the last breath out is the point of it,
+    // and because `Wait` is the final phase the session also lands exactly on
+    // a cycle boundary — a 10 minute session really is 10:00, not 10:30.
+    endOn: 'wait',
     phases: () => [
       { name: 'Inhale', kind: 'in', duration: 10 },
       { name: 'Hold', kind: 'hold', duration: 10 },
@@ -139,12 +149,17 @@ export function getExercise(id) {
   return EXERCISES[id] || EXERCISES.box;
 }
 
+/** Which phase kind a session ends at the completion of. See `endOn` above. */
+export function endKind(id) {
+  return getExercise(id).endOn || 'out';
+}
+
 /**
- * Box and Coherent both store their duration in `phaseTime` but accept
- * different ranges (3–6 step 1 vs 4.5–6 step 0.5). Rather than special-case
- * that at every call site, resolve the slider value against the exercise's
- * own range once and hand everything else a settings object that is already
- * valid for this exercise.
+ * Each slider exercise accepts its own range (Box 3–6 step 1, Coherent 4.5–6
+ * step 0.5, Long Exhale 6–8 step 1). Rather than special-case that at every
+ * call site, resolve the slider value against the exercise's own range once
+ * and hand everything else a settings object that is already valid for this
+ * exercise.
  */
 export function sliderValue(exercise, settings) {
   const s = exercise.slider;

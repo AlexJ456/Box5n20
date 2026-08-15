@@ -22,6 +22,11 @@
 
 <div id="app" class="app" aria-live="off">
   <main id="view" class="view"></main>
+  <!-- Bedtime dimming. A black veil, not a filter on .app: the two are
+       identical over an opaque backdrop, but a root filter puts the whole app
+       behind a render surface that has to be reprocessed on every repaint of
+       the breathing orb. -->
+  <div class="app__dim" aria-hidden="true"></div>
 </div>
 
 <div id="toast" class="toast" role="status" aria-live="polite"></div>
