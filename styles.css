@@ -36,7 +36,6 @@
   /* live, written from JS during a session */
   --phase-color: #f97316;
   --phase-rgb: 249, 115, 22;
-  --breath: 0;
 
   /* global brightness, 0.25 – 1 */
   --lum: 1;
@@ -63,30 +62,58 @@
 html {
   -webkit-text-size-adjust: 100%;
   text-size-adjust: 100%;
+  height: 100%;
+  overflow: hidden;
+  overscroll-behavior: none;
 }
 
+/* Hard scroll lock.
+   `overflow: hidden` alone does NOT stop iOS from rubber-banding the
+   document — only taking the body out of flow with `position: fixed` does.
+   Pinned to all four edges, there is no document scroll box at all, so
+   nothing can drift, bounce, or be dragged out of place. */
 body {
+  position: fixed;
+  inset: 0;
   margin: 0;
-  min-height: 100svh;
+  overflow: hidden;
+  overscroll-behavior: none;
   background: var(--bg);
   color: var(--ink-2);
   font-family: var(--font);
   font-size: 16px;
   line-height: 1.45;
-  overscroll-behavior: none;
   -webkit-font-smoothing: antialiased;
   -webkit-tap-highlight-color: transparent;
 }
 
 .app {
-  min-height: 100svh;
+  /* svh, not dvh: size to the smallest viewport so the layout never reflows
+     as browser toolbars hide. In a standalone PWA the two are identical. */
+  height: 100svh;
   display: flex;
   justify-content: center;
   padding: var(--sat) var(--sar) var(--sab) var(--sal);
-  /* Global bedtime dimming. #000 stays #000 at every level, so the OLED
-     background remains fully off. */
-  filter: brightness(var(--lum));
-  transition: filter 900ms var(--ease);
+  position: relative;
+}
+
+/* Global bedtime dimming. #000 stays #000 at every level, so the OLED
+   background remains fully off.
+
+   A black veil rather than `filter: brightness(var(--lum))` on .app. The two
+   are arithmetically the same thing — compositing black at alpha `1 - lum` and
+   multiplying each channel by `lum` both land on `channel * lum` in sRGB — but
+   a filter on the root makes the entire app a render surface that has to be
+   reprocessed every time the breathing orb repaints. This is one flat layer the
+   compositor can hold on its own, which is most of why the session no longer
+   stutters in Low Power Mode. */
+.app__dim {
+  position: absolute;
+  inset: 0;
+  background: #000;
+  opacity: calc(1 - var(--lum));
+  pointer-events: none;
+  transition: opacity 900ms var(--ease);
 }
 
 .view {
@@ -94,8 +121,8 @@ body {
   max-width: var(--col);
   display: flex;
   flex-direction: column;
-  min-height: 100svh;
-  min-height: calc(100svh - var(--sat) - var(--sab));
+  height: 100%;
+  min-height: 0;
   padding: 0 20px;
 }
 
@@ -140,49 +167,271 @@ h1, h2, h3 { margin: 0; font-weight: 500; letter-spacing: -0.01em; }
   to { opacity: 1; transform: none; }
 }
 
-.screen__scroll {
+/* Locked by default — not `auto`. main.js measures after every render and
+   only adds .is-scrollable when the content genuinely does not fit, so on a
+   screen that fits there is no scroll box at all: nothing to drag, nothing
+   to bounce, not even a sub-pixel of travel.
+   `-webkit-overflow-scrolling: touch` is deliberately absent; it creates a
+   momentum layer that rubber-bands on iOS even with content that fits. */
+.screen__scroll,
+.done {
   flex: 1;
   min-height: 0;
-  overflow-y: auto;
-  -webkit-overflow-scrolling: touch;
+  overflow: hidden;
+  overscroll-behavior: contain;
   scrollbar-width: none;
 }
-.screen__scroll::-webkit-scrollbar { display: none; }
+
+.screen__scroll.is-scrollable,
+.done.is-scrollable { overflow-y: auto; }
+
+/* Content is usually far shorter than the pane, which otherwise leaves a dead
+   gap above the Start button. Centring balances it. :not(.is-scrollable)
+   matters — centring a container that does overflow makes its top
+   unreachable. */
+.screen__scroll:not(.is-scrollable) {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+}
+
+.screen__scroll::-webkit-scrollbar,
+.done::-webkit-scrollbar { display: none; }
 
 .topbar {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 12px;
-  padding: 18px 0 22px;
+  padding: 16px 0 18px;
   flex: none;
 }
 
 .topbar__actions { display: flex; gap: 6px; }
 
 /* vertical rhythm between blocks on a scrolling screen */
-.block { margin-bottom: 28px; }
+.block { margin-bottom: 22px; }
 .block:last-child { margin-bottom: 8px; }
-
-.hint {
-  font-size: 0.76rem;
-  line-height: 1.5;
-  color: var(--ink-3);
-  margin-top: 10px;
-  padding: 0 2px;
-}
 
 .home__foot {
   flex: none;
-  padding: 14px 0 22px;
+  padding: 14px 0 18px;
   display: flex;
   flex-direction: column;
+  gap: 10px;
 }
 
-.range-block { padding: 14px 0 4px; }
+/* One row: session length (a value you read) then three toggles (things you
+   flip). The asymmetry is the point — it reads as hierarchy rather than as
+   four equal buttons, and it leaves only one control row on the screen. */
+.quick {
+  display: flex;
+  gap: 6px;
+}
+
+.chip {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  /* icon toggles are fixed squares; the value chips flex around them */
+  flex: 0 0 48px;
+  min-height: 48px;
+  padding: 0 6px;
+  border: 1px solid var(--line-soft);
+  border-radius: var(--r);
+  background: var(--card);
+  color: var(--ink-3);
+  transition: border-color 200ms var(--ease), background 200ms var(--ease),
+    color 200ms var(--ease);
+}
+.chip:hover { border-color: var(--line); }
+
+.chip[aria-pressed="true"] {
+  border-color: var(--accent);
+  background: var(--card-active);
+  color: var(--accent);
+}
+
+.chip--wide {
+  flex: 1 1 auto;
+  min-width: 0;
+  justify-content: flex-start;
+  padding: 0 13px;
+  color: var(--ink-2);
+}
+
+/* phase time — sized to its own value, e.g. "4.5s" */
+.chip--value {
+  flex: 0 0 auto;
+  padding: 0 14px;
+  color: var(--ink-2);
+}
+.chip--wide .icon { color: var(--ink-3); }
+
+.chip .icon { width: 18px; height: 18px; flex: none; }
+
+.chip__label {
+  font-size: 0.92rem;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* ==========================================================================
+   Bottom sheet
+   ========================================================================== */
+
+.sheet {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+}
+
+.sheet__backdrop {
+  position: absolute;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.6);
+  opacity: 0;
+  transition: opacity 320ms var(--ease);
+}
+.sheet.is-open .sheet__backdrop { opacity: 1; }
+
+.sheet__panel {
+  position: relative;
+  width: 100%;
+  /* On the phone this is the full column; on a wide screen it stays a
+     dialog-sized panel rather than stretching into a bar. */
+  max-width: min(var(--col), 480px);
+  margin: 0 auto;
+  padding: 8px 20px calc(var(--sab) + 18px);
+  background: #0d0703;
+  border: 1px solid var(--line);
+  border-bottom: none;
+  border-radius: 22px 22px 0 0;
+  transform: translateY(100%);
+  transition: transform 320ms var(--ease);
+}
+.sheet.is-open .sheet__panel { transform: translateY(0); }
+
+.sheet__handle {
+  width: 38px;
+  height: 4px;
+  border-radius: 2px;
+  background: var(--line);
+  margin: 0 auto 14px;
+}
+
+.sheet__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 6px;
+}
+
+/* compact enough to sit on the title line */
+.seg--sheet button { min-height: 28px; padding: 0 11px; font-size: 0.78rem; }
+
+.sheet__title {
+  font-size: 0.72rem;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+  margin: 0 0 0 2px;
+}
+
+.sheet__list {
+  display: flex;
+  flex-direction: column;
+  max-height: 62vh;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: none;
+}
+.sheet__list::-webkit-scrollbar { display: none; }
+
+.sheet__row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  min-height: 52px;
+  padding: 0 2px;
+  text-align: left;
+  color: var(--ink-2);
+  font-size: 1rem;
+  border-bottom: 1px solid var(--line-soft);
+}
+.sheet__row:last-child { border-bottom: none; }
+.sheet__row[aria-pressed="true"] { color: var(--accent); }
+.sheet__row .icon { width: 19px; height: 19px; color: var(--accent); }
+
+.sheet__label { flex: 1; }
+
+.sheet__row--custom { gap: 10px; }
+
+/* slider alternative to the option rows */
+.sheet__slider { padding: 18px 2px 6px; }
+
+.sheet__range {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 4px;
+}
+
+.sheet__readout {
+  font-size: 1.9rem;
+  font-weight: 300;
+  color: var(--ink);
+  font-variant-numeric: tabular-nums;
+  line-height: 1.1;
+}
+
+.sheet__scale {
+  font-size: 0.78rem;
+  color: var(--ink-3);
+  font-variant-numeric: tabular-nums;
+}
+
+.sheet__slider .btn { margin-top: 16px; width: 100%; }
+
+.sheet__input {
+  width: 84px;
+  min-width: 0;
+  text-align: center;
+  /* 16px keeps iOS from zooming the viewport on focus */
+  font-size: 16px;
+  font-variant-numeric: tabular-nums;
+  color: var(--ink);
+  background: var(--card);
+  border: 1px solid var(--line-soft);
+  border-radius: 10px;
+  padding: 9px 8px;
+}
+.sheet__input::placeholder { color: var(--ink-3); opacity: 1; }
+.sheet__input:focus { outline: none; border-color: var(--accent); }
+
+.sheet__set {
+  min-height: 38px;
+  padding: 0 14px;
+  border-radius: 10px;
+  background: linear-gradient(to bottom, var(--ctl-a), var(--ctl-b));
+  color: #1a0e03;
+  font-size: 0.9rem;
+  font-weight: 600;
+}
+
+.range-block { padding: 10px 0 2px; }
 
 .footnote {
-  margin: 34px 0 24px;
+  margin: 20px 0 12px;
   font-size: 0.76rem;
   line-height: 1.7;
   color: var(--ink-3);
@@ -191,10 +440,10 @@ h1, h2, h3 { margin: 0; font-weight: 500; letter-spacing: -0.01em; }
 
 .history__actions {
   display: flex;
-  flex-direction: column;
-  gap: 2px;
-  margin: 30px 0 24px;
+  gap: 8px;
+  margin: 18px 0 12px;
 }
+.history__actions .btn { flex: 1; }
 
 /* ==========================================================================
    Buttons
@@ -328,52 +577,6 @@ button:disabled { cursor: default; }
    Pills (duration / rounds presets)
    ========================================================================== */
 
-.pills {
-  display: grid;
-  grid-template-columns: repeat(5, 1fr);
-  gap: 7px;
-}
-
-.pill {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  min-width: 0;
-  min-height: 46px;
-  padding: 0 12px;
-  border: 1px solid var(--line-soft);
-  border-radius: var(--r);
-  background: var(--card);
-  color: var(--ink-2);
-  font-size: 0.92rem;
-  font-variant-numeric: tabular-nums;
-  transition: border-color 200ms var(--ease), background 200ms var(--ease),
-    color 200ms var(--ease);
-}
-.pill:hover { border-color: var(--line); }
-.pill[aria-pressed="true"] {
-  border-color: var(--accent);
-  background: var(--card-active);
-  color: var(--ink);
-}
-
-.pill__custom {
-  width: 100%;
-  min-width: 0;
-  background: none;
-  border: none;
-  color: inherit;
-  font: inherit;
-  font-variant-numeric: tabular-nums;
-  text-align: center;
-  padding: 0;
-  /* 16px keeps iOS from zooming the viewport on focus */
-  font-size: 16px;
-}
-.pill__custom::placeholder { color: var(--ink-3); opacity: 1; }
-.pill__custom:focus { outline: none; }
-.pill:focus-within { border-color: var(--accent); }
-
 /* ==========================================================================
    Slider
    ========================================================================== */
@@ -437,7 +640,7 @@ input[type="range"]::-moz-range-thumb {
   display: flex;
   align-items: center;
   gap: 14px;
-  padding: 15px 2px;
+  padding: 12px 2px;
   border-bottom: 1px solid var(--line-soft);
   text-align: left;
   width: 100%;
@@ -554,15 +757,6 @@ input[type="range"]::-moz-range-thumb {
 .session.is-dimmed .session__foot,
 .session.is-dimmed .dots { opacity: 0; pointer-events: none; }
 
-.notice {
-  font-size: 0.72rem;
-  letter-spacing: 0.16em;
-  text-transform: uppercase;
-  color: var(--ph-inhale);
-  min-height: 1em;
-  transition: opacity 400ms var(--ease);
-}
-
 /* ==========================================================================
    Ring
    ========================================================================== */
@@ -598,7 +792,10 @@ input[type="range"]::-moz-range-thumb {
   opacity: 0.9;
 }
 
-/* the part that actually breathes */
+/* The part that actually breathes. The scale and fade below are only the
+   at-rest state: during a session ui/ring.js drives transform and opacity with
+   one Web Animations API animation per phase, so the movement runs on the
+   compositor instead of being recomputed here on every frame. */
 .ring__orb {
   position: absolute;
   width: 78%;
@@ -611,7 +808,7 @@ input[type="range"]::-moz-range-thumb {
     rgba(var(--phase-rgb), 0.05) 55%,
     rgba(var(--phase-rgb), 0) 72%
   );
-  transform: scale(calc(0.46 + 0.54 * var(--breath)));
+  transform: scale(0.46);
   will-change: transform;
 }
 
@@ -625,8 +822,8 @@ input[type="range"]::-moz-range-thumb {
     rgba(var(--phase-rgb), 0.13) 0%,
     rgba(var(--phase-rgb), 0) 62%
   );
-  opacity: calc(0.35 + 0.65 * var(--breath));
-  transform: scale(calc(0.7 + 0.3 * var(--breath)));
+  opacity: 0.35;
+  transform: scale(0.7);
   will-change: transform, opacity;
   pointer-events: none;
 }
@@ -703,7 +900,6 @@ input[type="range"]::-moz-range-thumb {
    ========================================================================== */
 
 .done {
-  flex: 1;
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -873,6 +1069,78 @@ input[type="range"]::-moz-range-thumb {
 }
 
 /* ==========================================================================
+   Wide screens — a desktop browser, not a phone
+
+   The phone layout is deliberately untouched. The min-height guard keeps
+   this off an iPhone held in landscape, which is wide enough to match the
+   width query but far too short for the roomier spacing.
+   ========================================================================== */
+
+/* Width and type. Safe at any height because nothing here grows the layout
+   much vertically, and the ring is sized from vh so it self-limits. */
+@media (min-width: 760px) and (min-height: 600px) {
+  :root { --col: 600px; }
+
+  .view { padding: 0 28px; }
+  .title { font-size: 1.6rem; }
+  .section-label { font-size: 0.76rem; }
+
+  .ex { gap: 18px; }
+  .ex__name { font-size: 1.06rem; }
+  .ex__desc { font-size: 0.85rem; }
+  .ex__pattern { font-size: 0.84rem; padding: 5px 11px; }
+
+  .pill { font-size: 1rem; }
+  .btn { font-size: 1.08rem; }
+
+  /* The session screen gains the most from a big display. */
+  .ring { width: min(52vh, 440px); }
+  .ring__phase { font-size: 1.5rem; }
+  .ring__count { font-size: 3.6rem; }
+  .dots { gap: 30px; }
+  .dot__label { font-size: 0.7rem; }
+
+  .row__title { font-size: 1.02rem; }
+  .row__note { font-size: 0.82rem; }
+  .stat__value { font-size: 1.7rem; }
+  .heatmap { max-width: 100%; }
+}
+
+/* A real desktop window. A single column just gets stretched — the card's
+   name sits far left and its pattern far right with dead space between — so
+   the list goes two-up at roughly phone-card proportions and the two control
+   blocks sit side by side. That uses the width instead of spreading into it,
+   and it shortens the screen enough to fit a short window too. */
+@media (min-width: 1000px) and (min-height: 600px) {
+  :root { --col: 880px; }
+
+  .ex-list {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 10px;
+  }
+
+  .home__foot { align-items: center; }
+  .home__foot .btn,
+  .home__foot .quick { width: min(100%, 420px); }
+
+}
+
+/* Vertical breathing room, only where there is height to spend. A 1280x720
+   window is wide but short, and this spacing would push Home past the
+   bottom and re-introduce a scrollbar. */
+@media (min-width: 760px) and (min-height: 820px) {
+  .topbar { padding: 26px 0 22px; }
+  .ex { padding: 17px 20px; }
+  .ex-list { gap: 10px; }
+  .block { margin-bottom: 26px; }
+  .pill { min-height: 52px; }
+  .btn { min-height: 60px; }
+  .home__foot { padding: 18px 0 26px; }
+  .row { padding: 15px 4px; }
+}
+
+/* ==========================================================================
    Reduced motion — the orb stops scaling and breathes with opacity instead
    ========================================================================== */
 
@@ -882,11 +1150,16 @@ input[type="range"]::-moz-range-thumb {
     animation-iteration-count: 1 !important;
     transition-duration: 0.01ms !important;
   }
-  .app { transition: none; }
+  .app__dim { transition: none; }
 }
 
+/* The rules above cannot reach the breath: a Web Animations API animation
+   outranks any author rule without `!important`, and the blanket
+   `animation-duration` override only applies to CSS animations. ui/ring.js
+   checks for this class itself and animates opacity at a fixed scale — these
+   two rules are its at-rest state. */
 .reduce-motion .ring__orb {
   transform: scale(0.86);
-  opacity: calc(0.35 + 0.65 * var(--breath));
+  opacity: 0.35;
 }
 .reduce-motion .ring__glow { transform: scale(0.9); }

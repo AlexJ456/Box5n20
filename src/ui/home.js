@@ -1,4 +1,6 @@
 import { el, icon } from '../dom.js';
+import { openSheet } from './sheet.js';
+
 import {
   EXERCISE_IDS,
   getExercise,
@@ -13,13 +15,33 @@ import * as audio from '../audio.js';
 export function home(app) {
   const { settings } = app;
 
-  /** Chosen length: a number of minutes/rounds, or null for open-ended. */
-  let chosen = null;
-  let custom = '';
+  /**
+   * Chosen length: a number of minutes/rounds, or null for open-ended.
+   *
+   * Remembered per exercise. Box and Box Extreme are both time-based, so a
+   * single shared value meant setting Box Extreme to 10 minutes silently moved
+   * Box to 10 minutes as well. An exercise you have never given a length falls
+   * back to the last one picked in its mode, which is still kept separately for
+   * minutes and rounds — those two are not interchangeable.
+   */
+  const lengthKey = () => (getExercise(settings.exercise).mode === 'rounds' ? 'lastRounds' : 'lastMinutes');
+
+  function readLength() {
+    const stored = settings.lengths[settings.exercise];
+    if (typeof stored === 'number') return stored || null;
+    return settings[lengthKey()] || null;
+  }
+
+  function writeLength(value) {
+    settings.lengths[settings.exercise] = value || 0;
+    // Keeps the fallback on the most recent choice, so an exercise opened for
+    // the first time starts somewhere sensible rather than wide open.
+    settings[lengthKey()] = value || 0;
+    app.save();
+  }
 
   const listWrap = el('div', { class: 'ex-list block' });
-  const sliderWrap = el('div', { class: 'block' });
-  const lengthWrap = el('div', { class: 'block' });
+  const quickWrap = el('div', { class: 'quick' });
 
   const startBtn = el(
     'button',
@@ -53,8 +75,8 @@ export function home(app) {
         )
       ])
     ]),
-    el('div', { class: 'screen__scroll' }, [listWrap, sliderWrap, lengthWrap]),
-    el('div', { class: 'home__foot' }, [startBtn])
+    el('div', { class: 'screen__scroll' }, [listWrap]),
+    el('div', { class: 'home__foot' }, [quickWrap, startBtn])
   ]);
 
   /* ------------------------------------------------------------- exercises */
@@ -87,124 +109,276 @@ export function home(app) {
     if (settings.exercise === id) return;
     settings.exercise = id;
     app.save();
-    // Minutes and rounds are not interchangeable, so a mode switch resets it.
-    chosen = null;
-    custom = '';
+    // No reset needed — each exercise keeps its own remembered length, and
+    // renderAll re-reads it for the one now selected.
     renderAll();
   }
 
-  /* ---------------------------------------------------------------- slider */
+  /* ------------------------------------------------------------ phase time */
 
-  function renderSlider() {
-    const exercise = getExercise(settings.exercise);
-    if (!exercise.slider) {
-      sliderWrap.replaceChildren();
-      return;
+  /**
+   * Every slider range is only three or four steps wide (Box 3–6, Coherent
+   * 4.5–6 by halves, Long Exhale 6–8), so the sheet lists them rather than
+   * offering a slider — easier to hit and consistent with session length.
+   */
+  function sliderSteps(spec) {
+    const out = [];
+    for (let v = spec.min; v <= spec.max + 1e-9; v += spec.step) {
+      out.push(Math.round(v * 100) / 100);
     }
+    return out;
+  }
 
-    const spec = exercise.slider;
-    const value = sliderValue(exercise, settings);
-    const readout = el('div', { class: 'slider-row__value' }, `${num(value)}s`);
+  function applyPhase(spec, value) {
+    settings[spec.setting] = value;
+    app.save();
+    renderList();
+    renderQuick();
+  }
+
+  /**
+   * The slider is indexed over the same steps the list offers rather than
+   * over raw seconds, so it can only ever land on a value the exercise
+   * actually supports — including Coherent's half-seconds.
+   */
+  function phaseSliderBody(spec, steps, sheet) {
+    const current = sliderValue(getExercise(settings.exercise), settings);
+    const readout = el('div', { class: 'sheet__readout' }, `${num(current)}s`);
 
     const input = el('input', {
       type: 'range',
-      min: spec.min,
-      max: spec.max,
-      step: spec.step,
-      value,
+      min: 0,
+      max: steps.length - 1,
+      step: 1,
+      value: Math.max(0, steps.indexOf(current)),
       'aria-label': spec.label,
       oninput: (e) => {
-        const next = Number(e.target.value);
-        settings[spec.setting] = next;
-        readout.textContent = `${num(next)}s`;
-        app.save();
-        renderList();
+        const value = steps[Number(e.target.value)];
+        readout.textContent = `${num(value)}s`;
+        applyPhase(spec, value);
       }
     });
 
-    sliderWrap.replaceChildren(
-      el('div', { class: 'slider-row' }, [
-        el('div', { class: 'section-label', style: { margin: '0 0 0 2px' } }, spec.label),
-        readout
+    return el('div', { class: 'sheet__slider' }, [
+      el('div', { class: 'sheet__range' }, [
+        el('div', { class: 'sheet__scale' }, `${num(steps[0])}s`),
+        readout,
+        el('div', { class: 'sheet__scale' }, `${num(steps[steps.length - 1])}s`)
       ]),
-      input
+      input,
+      el(
+        'button',
+        { class: 'btn', type: 'button', onclick: () => sheet.close() },
+        'Done'
+      )
+    ]);
+  }
+
+  function openPhaseSheet() {
+    const exercise = getExercise(settings.exercise);
+    const spec = exercise.slider;
+    if (!spec) return;
+
+    const steps = sliderSteps(spec);
+    let sheet;
+
+    // Two ways to pick the same value; which one you prefer is remembered.
+    const modes = [['list', 'List'], ['slider', 'Slider']];
+    const buttons = modes.map(([mode, label]) =>
+      el(
+        'button',
+        {
+          type: 'button',
+          'aria-pressed': String(settings.phaseInput === mode),
+          onclick: () => {
+            settings.phaseInput = mode;
+            app.save();
+            buttons.forEach((b, i) =>
+              b.setAttribute('aria-pressed', String(modes[i][0] === mode))
+            );
+            sheet.setBody(mode === 'slider' ? phaseSliderBody(spec, steps, sheet) : null);
+          }
+        },
+        label
+      )
     );
+
+    sheet = openSheet({
+      title: spec.label,
+      value: sliderValue(exercise, settings),
+      options: steps.map((v) => ({ value: v, label: `${num(v)} seconds` })),
+      accessory: el('div', { class: 'seg seg--sheet', role: 'group' }, buttons),
+      onSelect: (value) => {
+        if (value === null) return;
+        applyPhase(spec, value);
+      }
+    });
+
+    if (settings.phaseInput === 'slider') {
+      sheet.setBody(phaseSliderBody(spec, steps, sheet));
+    }
   }
 
   /* --------------------------------------------------------------- length  */
 
-  function renderLength() {
-    const exercise = getExercise(settings.exercise);
-    const rounds = exercise.mode === 'rounds';
+  /** "Open", "5 min", "6 rounds" — what the length chip reads. */
+  function lengthLabel() {
+    const value = readLength();
+    if (!value) return 'Open';
+    if (getExercise(settings.exercise).mode === 'rounds') {
+      return `${value} ${value === 1 ? 'round' : 'rounds'}`;
+    }
+    return `${value} min`;
+  }
+
+  function openLengthSheet() {
+    const rounds = getExercise(settings.exercise).mode === 'rounds';
     const presets = rounds ? ROUND_PRESETS : TIME_PRESETS;
 
-    const customInput = el('input', {
-      class: 'pill__custom',
-      type: 'text',
-      inputmode: 'numeric',
-      pattern: '[0-9]*',
-      maxlength: '3',
-      value: custom,
-      placeholder: rounds ? 'rds' : 'min',
-      'aria-label': rounds ? 'Custom number of rounds' : 'Custom length in minutes',
-      oninput: (e) => {
-        const digits = e.target.value.replace(/[^0-9]/g, '').slice(0, 3);
-        e.target.value = digits;
-        custom = digits;
-        const parsed = Number.parseInt(digits, 10);
-        chosen = Number.isFinite(parsed) && parsed > 0 ? parsed : null;
-        markPills();
+    openSheet({
+      title: rounds ? 'Rounds' : 'Session length',
+      value: readLength(),
+      options: [
+        { value: null, label: 'Open — until I end it' },
+        ...presets.map((value) => ({
+          value,
+          label: rounds ? `${value} rounds` : `${value} minutes`
+        }))
+      ],
+      custom: {
+        label: 'Custom',
+        placeholder: rounds ? 'rounds' : 'minutes'
+      },
+      onSelect: (value) => {
+        writeLength(value);
+        renderQuick();
       }
     });
+  }
 
-    const openPill = pill('Open', () => {
-      chosen = null;
-      custom = '';
-      customInput.value = '';
-      markPills();
-    });
+  /* ----------------------------------------------------------- quick chips */
 
-    const presetPills = presets.map((value) =>
-      pill(String(value), () => {
-        chosen = value;
-        custom = '';
-        customInput.value = '';
-        markPills();
-      })
-    );
-
-    const customPill = el('div', { class: 'pill' }, [customInput]);
-
-    function pill(label, onclick) {
-      return el('button', { class: 'pill', type: 'button', onclick }, label);
-    }
-
-    function markPills() {
-      openPill.setAttribute('aria-pressed', String(chosen === null));
-      presetPills.forEach((node, i) => {
-        node.setAttribute('aria-pressed', String(chosen === presets[i] && custom === ''));
-      });
-      customPill.setAttribute('aria-pressed', String(custom !== '' && chosen !== null));
-    }
-
-    lengthWrap.replaceChildren(
-      el('div', { class: 'section-label' }, rounds ? 'Rounds' : 'Session length'),
-      el('div', { class: 'pills' }, [openPill, ...presetPills, customPill]),
+  /**
+   * One row: session length, phase time (when the exercise has one), then the
+   * three per-session toggles. The first two carry values you read, the rest
+   * you just flip — hence wide labelled chips and square icon buttons.
+   */
+  function renderQuick() {
+    // Filtered, because replaceChildren stringifies null rather than skipping
+    // it — phaseChip() returns null for the exercises with no slider.
+    const children = [
       el(
-        'div',
-        { class: 'hint' },
-        rounds
-          ? 'Open runs until you end it. Otherwise it stops after the last exhale.'
-          : 'Open runs until you end it. Otherwise it finishes the breath you are on.'
-      )
+        'button',
+        {
+          class: 'chip chip--wide',
+          type: 'button',
+          'data-chip': 'length',
+          'aria-haspopup': 'dialog',
+          onclick: openLengthSheet
+        },
+        [icon('clock'), el('span', { class: 'chip__label' }, lengthLabel())]
+      ),
+      phaseChip(),
+      soundChip(),
+      chip('countdown', 'hash', 'Countdown', settings.countdown, () => {
+        settings.countdown = !settings.countdown;
+        commit();
+      }),
+      chip('sleep', 'moon', 'Sleep', settings.sleepMode, () => {
+        settings.sleepMode = !settings.sleepMode;
+        commit();
+      })
+    ];
+    quickWrap.replaceChildren(...children.filter(Boolean));
+  }
+
+  /**
+   * Sound is a three-way choice, so the chip opens a sheet like the other
+   * value chips rather than toggling. The icon carries the current mode, so
+   * it still reads at a glance without costing the row any width.
+   */
+  const SOUND_ICON = { ambient: 'volume', chime: 'bell', off: 'volumeOff' };
+
+  function soundChip() {
+    const on = settings.sound !== 'off';
+    return el(
+      'button',
+      {
+        class: 'chip',
+        type: 'button',
+        'data-chip': 'sound',
+        'aria-haspopup': 'dialog',
+        'aria-pressed': String(on),
+        'aria-label': `Sound: ${settings.sound === 'off' ? 'mute' : settings.sound}`,
+        title: 'Sound',
+        onclick: openSoundSheet
+      },
+      [icon(SOUND_ICON[settings.sound] || 'volumeOff')]
     );
-    markPills();
+  }
+
+  function openSoundSheet() {
+    audio.unlock();
+    openSheet({
+      title: 'Sound',
+      value: settings.sound,
+      options: [
+        { value: 'ambient', label: 'Ambient — drone and soft chime' },
+        { value: 'chime', label: 'Chime — a tone at each phase' },
+        { value: 'off', label: 'Mute' }
+      ],
+      onSelect: (value) => {
+        if (!value) return;
+        settings.sound = value;
+        audio.setMode(value);
+        commit();
+      }
+    });
+  }
+
+  /** Only the three sliderless exercises omit this. */
+  function phaseChip() {
+    const exercise = getExercise(settings.exercise);
+    if (!exercise.slider) return null;
+    return el(
+      'button',
+      {
+        class: 'chip chip--value',
+        type: 'button',
+        'data-chip': 'phase',
+        'aria-haspopup': 'dialog',
+        'aria-label': exercise.slider.label,
+        title: exercise.slider.label,
+        onclick: openPhaseSheet
+      },
+      [el('span', { class: 'chip__label' }, `${num(sliderValue(exercise, settings))}s`)]
+    );
+  }
+
+  function chip(key, iconName, label, on, onclick) {
+    return el(
+      'button',
+      {
+        class: 'chip',
+        type: 'button',
+        'aria-pressed': String(Boolean(on)),
+        'aria-label': label,
+        title: label,
+        'data-chip': key,
+        onclick
+      },
+      [icon(iconName)]
+    );
+  }
+
+  function commit() {
+    app.save();
+    renderQuick();
   }
 
   function renderAll() {
     renderList();
-    renderSlider();
-    renderLength();
+    renderQuick();
   }
 
   function start() {
@@ -213,8 +387,8 @@ export function home(app) {
     const exercise = getExercise(settings.exercise);
     app.go('session', {
       exerciseId: settings.exercise,
-      limitMinutes: exercise.mode === 'time' ? chosen : 0,
-      targetRounds: exercise.mode === 'rounds' ? chosen : 0
+      limitMinutes: exercise.mode === 'time' ? readLength() : 0,
+      targetRounds: exercise.mode === 'rounds' ? readLength() : 0
     });
   }
 

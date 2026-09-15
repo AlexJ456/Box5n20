@@ -13,7 +13,7 @@
  *   everything else  left alone
  */
 
-const VERSION = 'v1.1.0';
+const VERSION = 'v1.11.0';
 const CACHE = `breathe-${VERSION}`;
 
 const SHELL = [
@@ -30,6 +30,7 @@ const SHELL = [
   './src/haptics.js',
   './src/wakelock.js',
   './src/ui/ring.js',
+  './src/ui/sheet.js',
   './src/ui/home.js',
   './src/ui/session.js',
   './src/ui/complete.js',

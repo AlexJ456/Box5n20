@@ -35,9 +35,53 @@ function go(name, props = {}) {
   clear(viewEl);
   current = VIEWS[name](app, props);
   viewEl.append(current.el);
-  // Screens are full-height panes; never carry scroll position between them.
-  viewEl.scrollTop = 0;
+  watchView(name);
+  syncScrollLocks();
 }
+
+/* ------------------------------------------------------------ scroll lock -
+   Scroll containers are locked (`overflow: hidden`) in CSS and only opened
+   up when their content genuinely overflows. Measuring beats a `max-height`
+   media query here: the query would see the raw viewport height and know
+   nothing about the safe-area insets the content actually has to live
+   inside, which differ per device. This way a screen that fits is truly
+   immovable, and one that does not stays reachable instead of clipping. */
+
+function syncScrollLocks() {
+  for (const node of viewEl.querySelectorAll('.screen__scroll, .done')) {
+    // 1px of slack so sub-pixel rounding never unlocks a screen that fits.
+    node.classList.toggle('is-scrollable', node.scrollHeight > node.clientHeight + 1);
+  }
+}
+
+let relayoutPending = false;
+function scheduleSync() {
+  if (relayoutPending) return;
+  relayoutPending = true;
+  requestAnimationFrame(() => {
+    relayoutPending = false;
+    syncScrollLocks();
+  });
+}
+
+// Content changes (switching exercise, clearing history, revealing the sleep
+// dim slider) and viewport changes (rotation, a resized desktop window) both
+// need a re-measure. Watching the view covers every case without each screen
+// having to remember to ask.
+//
+// Except during a session: that screen has no scroll container to unlock, but
+// its ring rewrites the countdown text every second — which fired this observer,
+// scheduled a frame, and re-walked the DOM for nothing, once a second,
+// underneath the breathing animation.
+const viewObserver = new MutationObserver(scheduleSync);
+
+function watchView(name) {
+  viewObserver.disconnect();
+  if (name !== 'session') viewObserver.observe(viewEl, { childList: true, subtree: true });
+}
+
+new ResizeObserver(scheduleSync).observe(viewEl);
+window.addEventListener('orientationchange', scheduleSync);
 
 function setBrightness(value) {
   appEl.style.setProperty('--lum', String(value));

@@ -17,9 +17,21 @@ const BACKUP_VERSION = 1;
 
 export const DEFAULTS = {
   exercise: 'box',
-  phaseTime: 4,
-  exhaleDuration: 6,
+  // One key per exercise with a slider. They used to share `phaseTime`,
+  // which meant setting one silently moved the other.
+  phaseTime: 4,        // Box Breathing
+  coherentTime: 5,     // Coherent Breathing
+  exhaleDuration: 6,   // Long Exhale
   sound: 'off',        // 'off' | 'chime' | 'ambient'
+  // Session length, remembered per exercise. Box and Box Extreme are both
+  // time-based, so keying this off the mode alone meant setting one silently
+  // moved the other. `lastMinutes`/`lastRounds` survive as the fallback for an
+  // exercise that has never been given a length of its own — still split by
+  // mode, so a first visit to 4-7-8 cannot inherit minutes as a count of rounds.
+  lengths: {},         // exercise id -> minutes, or rounds for 4-7-8. 0 = open
+  lastMinutes: 0,      // 0 = open-ended
+  lastRounds: 0,       // 0 = open-ended
+  phaseInput: 'list',  // how the phase-time sheet picks: 'list' | 'slider'
   countdown: false,
   haptics: false,
   sleepMode: true,
@@ -67,21 +79,40 @@ function migrateLegacy() {
  * for both the stored copy and an imported one, so a hand-edited file and a
  * hand-edited localStorage entry are treated with the same suspicion.
  */
-export function sanitizeSettings(base) {
+export function sanitizeSettings(input) {
+  // An imported file can hand us anything at all, including null.
+  const base = input && typeof input === 'object' ? input : {};
+
   const settings = { ...DEFAULTS };
-  if (base && typeof base === 'object') {
-    for (const key of Object.keys(DEFAULTS)) {
-      const value = base[key];
-      if (value === undefined || value === null) continue;
-      if (typeof value !== typeof DEFAULTS[key]) continue;
-      settings[key] = value;
-    }
+  for (const key of Object.keys(DEFAULTS)) {
+    const value = base[key];
+    if (value === undefined || value === null) continue;
+    if (typeof value !== typeof DEFAULTS[key]) continue;
+    settings[key] = value;
+  }
+
+  // `lengths` cannot come through the loop above. `typeof [] === 'object'`, so
+  // an array — or any other shape a hand-edited backup might carry — would pass
+  // the type check unexamined, and the spread from DEFAULTS aliases one empty
+  // object into every settings instance ever sanitized. Rebuild it instead.
+  settings.lengths = sanitizeLengths(base.lengths);
+
+  // One-time migration, safe to delete once installs have turned over.
+  // Coherent used to share Box's `phaseTime`. Carry the value across when it
+  // is valid for Coherent so the card keeps showing what it showed before;
+  // otherwise leave the default. Either way Box is untouched.
+  // Range mirrors EXERCISES.coherent.slider — that is the source of truth.
+  if (base.coherentTime === undefined && typeof base.phaseTime === 'number') {
+    const shared = base.phaseTime;
+    const onGrid = Math.abs(shared * 2 - Math.round(shared * 2)) < 1e-9;
+    if (shared >= 4.5 && shared <= 6 && onGrid) settings.coherentTime = shared;
   }
 
   // Guard the ranged values in case the stored copy was hand-edited.
   settings.brightness = clamp(settings.brightness, 0.25, 1);
   settings.dimFloor = clamp(settings.dimFloor, 0.15, 1);
   if (!['off', 'chime', 'ambient'].includes(settings.sound)) settings.sound = 'off';
+  if (!['list', 'slider'].includes(settings.phaseInput)) settings.phaseInput = 'list';
   return settings;
 }
 
@@ -98,6 +129,22 @@ export function saveSettings(settings) {
 
 function clamp(value, min, max) {
   return Math.min(max, Math.max(min, value));
+}
+
+/**
+ * exercise id -> a whole number of minutes or rounds, 0 meaning open-ended.
+ * Ids are not checked against the catalogue on purpose: an entry for an
+ * exercise this build does not have costs nothing, and dropping it would lose
+ * the setting for anyone moving between builds.
+ */
+function sanitizeLengths(input) {
+  const out = {};
+  if (!input || typeof input !== 'object' || Array.isArray(input)) return out;
+  for (const [id, value] of Object.entries(input)) {
+    if (typeof value !== 'number' || !Number.isFinite(value)) continue;
+    out[id] = clamp(Math.round(value), 0, 999);
+  }
+  return out;
 }
 
 /* -------------------------------------------------------------------------

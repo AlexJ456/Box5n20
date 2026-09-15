@@ -13,6 +13,8 @@ import {
 import * as audio from '../audio.js';
 import * as haptics from '../haptics.js';
 
+const RECENT_SHOWN = 20;
+
 function intensity(seconds) {
   if (seconds <= 0) return 0.05;
   if (seconds < 120) return 0.22;
@@ -141,7 +143,7 @@ export function history(app) {
     );
 
     const recent = list
-      .slice(-20)
+      .slice(-RECENT_SHOWN)
       .reverse()
       .map((entry) =>
         el('div', { class: 'log__item' }, [
@@ -158,12 +160,13 @@ export function history(app) {
       ]),
       el('div', { class: 'section-label' }, 'Last 12 weeks'),
       el('div', { class: 'heatmap' }, cells),
-      el('div', { class: 'section-label' }, 'Recent'),
+      el('div', { class: 'section-label' },
+        list.length > RECENT_SHOWN ? `Recent · ${RECENT_SHOWN} of ${list.length}` : 'Recent'),
       el('div', { class: 'log' }, recent),
       el('div', { class: 'history__actions' }, [
-        action('Export backup', () => exportBackup(list, app.settings)),
-        action('Import backup', () => fileInput.click()),
-        action('Clear history', () => {
+        action('Export', () => exportBackup(list, app.settings)),
+        action('Import', () => fileInput.click()),
+        action('Clear', () => {
           if (!confirm('Delete all session history? This cannot be undone.')) return;
           clearHistory();
           list = [];
